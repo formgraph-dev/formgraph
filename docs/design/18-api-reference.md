@@ -132,9 +132,11 @@ interface FormEngine<V = Json, Paths extends string = string, Payload = Json> { 
   plugins: {};                                                  // typed PluginMap<R> per engine (03 §8.1)
 }
 
-type SubmitResult =                                             // 09 §4
-  | { ok: true }
-  | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
+type SubmitSuccess =                                           // 09 §4; savedRevision is a local pre-finalization token
+  | { ok: true; response: 'applied' | 'none'; savedRevision: number; pendingChanges: boolean }
+  | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[] };
+type SubmitResult = SubmitSuccess
+  | { ok: false; reason: 'load' | 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
   | { ok: false; reason: 'gated'; gates: GateStop[] }           // GateStop: 09 §4
   | { ok: false; reason: 'cancelled' | 'timeout'; outcome: 'not-sent' | 'unknown' }

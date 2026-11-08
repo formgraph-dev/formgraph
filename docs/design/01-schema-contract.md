@@ -124,8 +124,12 @@ type Def<FT extends FieldType> = FieldTypeRegistry[FT];
 export type FieldOf<FT extends FieldType> =
   FieldBase<FT, Def<FT>['value'], Def<FT>['ui']> & Def<FT>['config'];
 
-/** Discriminated union over every registered type, narrowed by `fieldType`. */
-export type Field = { [FT in FieldType]: FieldOf<FT> }[FieldType];
+/** Known core/merged entries plus a runtime envelope for locally registered custom types. */
+export type KnownField = { [FT in FieldType]: FieldOf<FT> }[FieldType];
+export interface CustomField extends FieldBase<`x-${string}`, Json, Record<string, Json>> {
+  [configKey: string]: unknown;   // wire envelope only; runtime input must still be JSON
+}
+export type Field = KnownField | CustomField;
 
 export type ValueOf<FT extends FieldType> = Def<FT>['value'];
 ```
@@ -448,11 +452,13 @@ Input fields, unlike normalized fields, accept option-array shorthands recursive
 type InputFieldOf<F> = F extends { fieldType: 'choice' | 'multi-choice' }
   ? Omit<F, 'options'> & { options?: OptionsSource | SelectOption[] }
   : F;
-export type InputField = InputFieldOf<Field>;   // distributive over the Field union; custom fields unchanged
+export type InputField = InputFieldOf<Field>;   // includes CustomField without global declaration merging
 export type InputNode = InputField | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode;
 ```
 
-`DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `Omit<FormContract, 'structure'> & { structure: InputNode[] }`; the published input JSON Schema is generated from these input-specific types. The normalized `Field`/`Node` types remain unchanged. A macro in an array's single `item` slot must expand to exactly one non-content node, not a list of siblings ([15 §5](./15-macros.md#5-rules)). `expandContract(input, { macros }) → { contract, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
+`DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `Omit<FormContract, 'structure'> & { structure: InputNode[] }`; the published input JSON Schema is generated from these input-specific types. Normalized choice options remain `OptionsSource`-only. A macro in an array's single `item` slot must expand to exactly one non-content node, not a list of siblings ([15 §5](./15-macros.md#5-rules)). `expandContract(input, { macros }) → { contract, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
+
+**Custom fields at the wire boundary.** Both published input/core schemas have a distinct `fieldType: x-…` branch matching `CustomField`: shared field keys are checked, additional flat config keys and custom `ui` keys are allowed, and all values must be JSON. This envelope lets a `SchemaSource` return a locally registered `x-signature` without global augmentation; it does not claim that arbitrary config is valid. Validate-core resolves the actual registry entry and checks its value/config/ui schemas (or applies the documented missing-type fallback). Unknown names without `x-` still fail; only the custom branch is open. Statically authored `ContractFor<E>`/`defineContract` derives custom fields from `E`, not this permissive envelope, so ids and registered config remain checked ([21](./21-type-inference.md)). Normalization retains the same custom envelope; typed compiled schemas retain the stronger registry/contract brand.
 
 ## 6. Document
 

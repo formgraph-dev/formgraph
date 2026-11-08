@@ -78,8 +78,9 @@ After a successful submit, the engine reloads with the target's response (if it 
 ```
 engine.submit():                  // submit({ confirm?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitResult>
   if a submit is in flight → return its promise (no second run, no error)
-  submitCount++ ; phase=submitting
-  start deadline/cancellation race (§4 below); clear lastSubmitError
+  submitCount++; start deadline/cancellation race (§4 below); clear lastSubmitError
+  await ready without changing initialization's loading/error phase; readiness failure → fail('load')
+  phase=submitting
   repeat preflight until value/eligibility version is stable:
     await schema loads for eligible dynamic groups; failed/mismatched → install group notice; fail('schema')
     force-compile controllers, validators and option state for eligible fields (03 §6.3)
@@ -102,20 +103,30 @@ engine.submit():                  // submit({ confirm?: string[]; signal?: Abort
   result  = await submitTargets[targetId]({ payload, mode, confirmed }, ctx)   // AsyncSource, 08 §1.1
             // throw/reject → lastSubmitError = error; fail('target')
   if (result.errors?.length ?? 0) > 0 → map external errors (§5) → fail('external')
-  if result.entity: reload({ entity: result.entity, policy: 'replace' })
+  targetAccepted = true
+  response = 'none'
+  if Object.prototype.hasOwnProperty.call(result, 'entity'):
+    stage and atomically apply reload({ entity: result.entity, policy: 'replace' })
+      // failure/cancellation/deadline here → response='failed', retain old state, record E_SUBMIT_RESPONSE; do not call target again
+    if applied: response = 'applied'
+  savedRevision = engine.revision.get()   // after response application, BEFORE deferred/listener changes
+  savedVersion = value/eligibility version
   finalize('submitted')        // unlock + drain queued updates + phase change; notify only after all are complete
-  return {ok:true}
+  pendingChanges = value/eligibility version changed since savedVersion OR engine.revision.get() !== savedRevision
+  return {ok:true, response, savedRevision, pendingChanges, ...responseDiagnostics}
 
 fail(reason, extra?):
-  finalize('ready')            // same atomic unlock/drain/phase transition, including cancellation and timeout
+  finalize(initialization.pending ? 'loading' : initialization.failed ? 'error' : 'ready')
   r = {ok:false, reason, ...extra}
   run plugin failure observers, then onSubmitFailed(r) (11 §8); return r
 ```
 
 ```ts
-type SubmitResult =
-  | { ok: true }
-  | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
+type SubmitSuccess =
+  | { ok: true; response: 'applied' | 'none'; savedRevision: number; pendingChanges: boolean }
+  | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[] };
+type SubmitResult = SubmitSuccess
+  | { ok: false; reason: 'load' | 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
   | { ok: false; reason: 'gated'; gates: GateStop[] }
   | { ok: false; reason: 'cancelled' | 'timeout'; outcome: 'not-sent' | 'unknown' }
@@ -128,13 +139,19 @@ type GateStop = { gate: string; policy: 'confirm' | 'block'; notices: Array<Noti
 
 **Edit lock.** Only after successful preflight, before `before` hooks and serialization, does the exclusive lock begin. From then through response application, user/host/plugin value or row-structure writes (`setValue`, `revert`, `reset`, array commands, history replay and host `reload`) reject with `E_SUBMIT_BUSY`; `restore` retains `E_RESTORE_BUSY` throughout submission. Renderers use the form phase to prevent editing without changing `disabled` or eligibility. Every mutation entry checks the lock. `applyExternal` queues throughout submission. Once locked, core value-changing completions and context-driven recomputation are deferred to finalization; custom components buffer rejected value updates as subsequent edits, rather than throwing from subscription callbacks ([16 §22](./16-cookbook.md#22-another-engine-as-a-custom-field)). The submit's own response reload is internal and allowed. Failure, success, cancellation and disposal release the lock; deferred work is generation-checked before applying. Thus a response `replace` cannot silently discard a newer accepted edit.
 
-**Cancellation and deadline.** The first call's `signal` and `timeoutMs` govern a shared in-flight submit promise; later calls return that promise and do not replace its controls. The default overall deadline is `submission.timeoutMs ?? 30_000`; per-call `timeoutMs` may override it with a positive finite value. `engine.cancelSubmit()` cancels the current attempt (no-op when idle). Abort/deadline is raced against **every** awaited stage, including readiness, sources, component/busy settlement, hooks and response processing. It does not depend on the callee honoring its signal: revoke the attempt generation, stop its continuation, abort submit-owned work, release the lock, drain queued updates, return to `ready` and resolve once with `reason: 'cancelled'` or `'timeout'`. Late resolutions/rejections are consumed and cannot call the target, apply its response or finalize the old attempt. Shared field loads may continue for other consumers, but never resume the cancelled submit. Final failure observers cannot hold completion hostage: invoke them in order without awaiting unbounded promises and report rejections separately. Timers use `platform`, not DOM globals.
+**Cancellation and deadline.** The first call's `signal` and `timeoutMs` govern a shared in-flight submit promise; later calls return that promise and do not replace its controls. The default overall deadline is `submission.timeoutMs ?? 30_000`; per-call `timeoutMs` may override it with a positive finite value. `engine.cancelSubmit()` cancels the current attempt (no-op when idle). Abort/deadline is raced against **every** awaited stage, including readiness, sources, component/busy settlement, hooks and response processing. It does not depend on the callee honoring its signal: revoke the attempt generation, stop its continuation, abort submit-owned work, release the lock, drain queued updates and resolve once. Before target acceptance, this returns `reason: 'cancelled'` or `'timeout'`; after acceptance, response-application interruption is the saved-but-unapplied success below. Late resolutions/rejections cannot call the target, apply its response or finalize the old attempt. While waiting for initialization, cancellation preserves `loading` (or the actual initialization `error`), never fabricates `ready`; the independent load continues and owns its eventual phase transition. Once initialized, ordinary failure/cancellation returns to `ready`. Shared field loads may continue for other consumers, but never resume the cancelled submit. Final observers cannot hold completion hostage; timers use `platform`, not DOM globals.
 
-Before the target is invoked, `outcome` is `'not-sent'`; once it has been invoked it is `'unknown'`, even if its signal is aborted. A timed-out/cancelled target may already have saved remotely. Never auto-retry it; reconcile with the backend or use host idempotency keys first. The same uncertainty can apply to target transport rejection. Editing state survives cancellation; disposal is not required.
+Before the target is invoked, cancellation `outcome` is `'not-sent'`; while its result is unknown it is `'unknown'`, even if its signal is aborted. A timed-out/cancelled target may already have saved remotely. Never auto-retry it; reconcile with the backend or use host idempotency keys first. Once a no-errors response is accepted, the save is known to have succeeded and the result stays `ok: true` even if response application fails. The same uncertainty can apply to target transport rejection. Editing state survives cancellation; disposal is not required.
 
 **Target failure.** A thrown/rejected target records the original error in `FormState.lastSubmitError` and reports a runtime `E_SUBMIT_TARGET`. It returns `{ ok: false, reason: 'target' }`, keeps local edits, restores `ready`, unlocks, drains external/deferred updates, then runs failure hooks and `onSubmitFailed`, in that order. The host may offer retry; the engine never automatically retries a potentially non-idempotent target. All other failure branches also drain the queue. Success still applies any response entity first, then unlocks and drains before success observers. Finalization is shared so cleanup cannot be skipped by a failure branch.
 
+**Saved, but response not applied.** `entity` is tested by own-property presence, so `null`, `false`, `0` and `''` all run the inbound pipeline (a present `undefined` is not JSON and is an invalid response, not an omitted entity). After a no-errors target response, stage mapping, schema loads and the replacement off-store. Any mapping/load/compile failure (including cancellation/deadline during this stage) discards that plan, preserves the old baseline/current edits and reports `E_SUBMIT_RESPONSE` with the underlying diagnostics in `lastSubmitError`. Finalize/unlock/drain normally, set `phase: 'submitted'`, dispatch success observers and return `{ ok: true, response: 'failed', savedRevision, pendingChanges, diagnostics }`; do not call `onSubmitFailed` or run the save target again. The host shows “Saved, refresh required” and retries **only** `reload({ entity: retainedResponse.entity, policy: 'preserve-edits' })`, or refetches the entity source, after fixing the local failure. The target integration should retain its raw response when it wants that retry path. `response: 'none'` means no entity was returned; `applied` means its replacement committed.
+
+**Edits beyond the saved snapshot.** Every success returns `savedRevision`: the local engine revision after its internal response-application commit (or unchanged state when none/failed), **before** deferred work, phase listeners and success observers can write. It also returns `pendingChanges`, computed after synchronous finalization/listener/observer work: true if either that revision or the engine's submission value/eligibility version changed after the acknowledged state. The latter catches deferred defaults/computed/context changes even when they do not write `current` and therefore do not bump `revision`. It may conservatively retain externally changed work; it must not omit an unsubmitted resolved-value change. Finalization drains synchronous listener ticks before resolving submit. Retain the editor/draft if `pendingChanges` is true **or** a fresh `engine.revision.get()` comparison differs from the token. This is not a backend revision or a promise about future writes. A failed response application always needs reconciliation even when neither counter changed.
+
 `finalize` releases the lock and drains queued updates before publishing the final phase, in one notification boundary. A phase subscriber that sees `ready`/`submitted` may write immediately; it must not observe a still-held lock or a baseline that has not yet drained. Such listener writes form a subsequent tick, not part of the frozen submitted payload.
+
+If cancellation occurs before initialization establishes a baseline, its external-update queue remains engine-owned and is drained after initialization commits, not applied to a fabricated ready state. Cancellation does not supersede the independent initial load or alter its eventual success/error phase.
 
 #### 4.1 Plugin submit hooks
 
@@ -287,6 +304,7 @@ interface Snapshot {
   rows: Record<DataPath, RowKey[]>;         // array row identity, so per-row indicators and errors line up
   baselineRows: Record<RowKeyPath, BaselineRowKeys>; // keys + unresolved provenance (03 §3.2), paired with base values
   base: Record<DataPath, Json | null>;      // baseline of each stored leaf of `current` when taken
+  optionDeps: Record<RowKeyPath, Json>;      // canonical dependency-input tuples for saved choice selections (§8.2)
   stash?: Json;                             // dynamic-group orphans kept by orphanPolicy 'stash' (08 §5)
   touched?: DataPath[];                     // row key paths; restored so messages show as they did
   takenAt: string;                          // ISO timestamp
@@ -300,6 +318,8 @@ interface RestoreResult { applied: DataPath[]; conflicts: DataPath[]; dropped: D
 `baselineRows` preserves which current keys originally belonged to each saved baseline array, independently of current order and insertions. Drafts include maps for arrays under their saved atomic `base` entries (and stash baselines); arrays with no restored current override keep live baseline maps, not draft current keys. For an unchanged baseline, restore installs saved associations against `base` values recursively before descendant revert is available. Validate key uniqueness, `keys.length` against the saved baseline array, disjoint `keys`/`unresolved` lists, nesting and map/value consistency (`E_SNAPSHOT_INVALID` otherwise). With a changed baseline, match by `identityKey` where available; otherwise assign the new baseline fresh keys and retain formerly-baseline draft keys in `unresolved`, including any already-unresolved keys. Descendant revert rejects those keys with `E_ROW_BASELINE_UNKNOWN`, never guessed indexes. Keys in neither list are genuinely inserted and use defaults. These markers survive another snapshot/restore and stash round-trip. Accepting the external whole array or whole-array revert restores known associations; choosing `local` or `keep-draft` retains unresolved markers even without a conflict flag.
 
 **Field-type filter.** `snapshot()` stores each value through its field type's `toSnapshot` hook ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)). For assets (`assets` plugin) only values with status `ready` are kept. Others (pending, uploading, error) are left out with `W_SNAPSHOT_ASSET_DROPPED`, since their uploads don't survive the session.
+
+**Saved option dependencies.** `optionDeps` stores each saved choice/multi-choice selection's cascade dependency-input tuple from the **resolved draft**, not its baseline. Include explicit/inferred form/context dependency reads (`dependsOn`, map keys and external inputs to filters/disable expressions), with tagged presence so missing and `null` differ. Exclude `$option`/`$selected` local roots, result lists, search/pagination UI state and provider locale variation that merely reloads labels. Provider variation still reloads/revalidates options; it does not by itself justify clearing a restored selection. Capture unedited dependency fields too, even though they are absent from `current`/`base`; nested instances use stable row-key paths. Stashes retain corresponding tuples. These are canonical JSON values compared structurally, not lossy hashes. They are untrusted hints about prior selection context, never a way to skip current `in-options` or other validation. Their schema, paths and size are validated with the snapshot.
 
 ### 8.1 Flow
 
@@ -331,12 +351,12 @@ savedRevision = engine.revision.get();     // the restored state is what's store
    - `conflict` (default): the draft value is applied and flagged as a conflict (§7.2). Submit is blocked until resolved (`submission.conflicts`).
    - `keep-draft`: the draft value wins silently.
    - `drop`: the draft value is discarded for that path.
-7. **Cascade invalidation** ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)) is included in the final commit's tick for paths whose baseline changed since the snapshot or that were dropped, since their dependents were saved against other values. Values that restored unchanged aren't invalidated. Notifications occur only after the complete structural/value tick.
+7. **Cascade invalidation** ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)) compares each retained selection's saved `optionDeps` tuple with its effective dependency tuple in the **planned resolved result**, after stale decisions and computed/default resolution. Invalidate that selection only when those inputs differ; a baseline change or dropped override alone is not evidence of changed inputs. Thus retaining draft country `US` also retains a city saved for `US`, even if the external country changed; an unedited country that now resolves differently invalidates the city because its saved value was captured too. A removed/unknown dependency tuple is conservatively changed for a retained selection. Process in dependency order, recomputing downstream tuples after each cascade write. Include synchronous changes in the final commit's tick and generation-check subsequent async option work normally. Current option membership/validation still runs even when a tuple is unchanged. Notifications occur after the complete structural/value tick.
 
 ### 8.3 Notes
 
 - **Dirty vs. draft status are different things.** Field indicators show "changed from defaults / saved data" and survive any number of draft saves. "Changed since the last draft save" is host state: compare `engine.revision` with the `revision` of the last snapshot that was stored successfully ([16 §1](./16-cookbook.md#1-autosave-and-drafts)). The engine doesn't track saves, because only the host knows whether one succeeded. Any commit that changes `current`, `rows` or `stash` bumps it (including undo, reset, reload and restore), so a label may say "unsaved" when the values happen to match the draft again; saving again is harmless.
-- **Submitting** still uses `serialize()`. After a successful submit, the host deletes the draft.
+- **Submitting** still uses `serialize()`. Delete a submitted draft only after a reconciled success with `pendingChanges: false` and no fresh revision difference from `savedRevision` (§4); retain it and the editor otherwise.
 - A snapshot contains user data. Where and how it's stored (and encrypted) is the host's choice.
 - Snapshots also cover crash recovery, moving an in-progress form between tabs or devices, and test fixtures.
 

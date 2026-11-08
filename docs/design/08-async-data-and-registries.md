@@ -50,7 +50,7 @@ interface SourceCtx { signal: AbortSignal; context: Json; formId: string; locale
 type AsyncSource<I, O> = (input: I, ctx: SourceCtx) => O | Promise<O>;
 
 type EntitySource = AsyncSource<{ id: Json }, Json>;                                    // 09 §2
-interface SubmitTargetResult { errors?: ExternalErrors; entity?: Json }   // errors: [] is equivalent to no errors; entity is still applied
+interface SubmitTargetResult { errors?: ExternalErrors; entity?: Json }   // errors: [] means accepted; any present entity (including falsy JSON) is applied
 type SubmitTarget<P = Json> = AsyncSource<{ payload: P; mode: 'full' | 'patch'; confirmed: string[] }, SubmitTargetResult>; // 09 §4; distinct from the engine's SubmitResult; confirmed: gates the user confirmed (06 §7.3)
 ```
 
@@ -74,6 +74,8 @@ A transformer that throws fails the operation that owns it, writes nothing and n
 | result | option list `status: 'error'`, previous options kept, response discarded, value left alone |
 | inbound | the load fails: `ready` or `reload()` rejects, `loaded` unchanged |
 | outbound | `submit()` returns `{ ok: false, reason: 'transform' }`, the target isn't called |
+
+An inbound failure while applying an **accepted submit response** is different from a failed save: the response plan is discarded, `E_SUBMIT_RESPONSE` is reported, and submit returns `ok: true, response: 'failed'` with diagnostics ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). The host retries mapping/reload/refetch, not the already-accepted target call.
 
 `QueryTransformer` and `ResultTransformer` are in §2. The four transformer registries stay separate so each kind's signature can change independently and their ids don't share a namespace.
 

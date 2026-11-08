@@ -41,18 +41,24 @@ const offRevision = engine.revision.subscribe((rev) => {
   if (rev !== savedRevision) debouncedSave();
 });
 // submit
-if ((await engine.submit()).ok) {
-  stopped = true; again = false;
-  offRevision(); debouncedSave.cancel();        // stop scheduling and cancel any pending debounce
-  engine.dispose();                            // this recipe exits the editing flow after a successful submit
-  await saving?.catch(() => {});               // an older put must settle before deletion
-  await drafts.delete(formKey);                // no late put can recreate the submitted draft
+const result = await engine.submit();
+if (result.ok) {
+  if (result.response === 'failed' || result.pendingChanges || engine.revision.get() !== result.savedRevision) {
+    showBanner(result.response === 'failed' ? 'Saved, refresh required.' : 'Saved; newer changes remain.');
+    debouncedSave();                           // retain editor, subscription and draft for remaining/reconciliation work
+  } else {
+    stopped = true; again = false;
+    offRevision(); debouncedSave.cancel();      // no unsubmitted revision remains; exit this editing flow
+    engine.dispose();
+    await saving?.catch(() => {});             // an older put must settle before deletion
+    await drafts.delete(formKey);              // no late put can recreate the submitted draft
+  }
 }
 ```
 
 `revision` (core, [03 §7](./03-state-model.md#7-engine-write-api-core)) bumps on any commit that changes `current`, `rows` or `stash`, whatever its origin (user edits, host writes, effects, undo, reset, reload), because all of them change what the draft must contain. `savedRevision` only moves when a `put` succeeds, so a failed save leaves the form marked unsaved. The save status lives in host state. A step-based draft saves after `if ((await wiz.next()).ok)` instead ([11 §5](./11-rendering-and-adapters.md#5-wizards)).
 
-This success branch closes/unmounts the editor; it does not leave a live form with autosave detached. To keep editing after save, start a fresh engine/autosave session after draft deletion, or pause scheduling only for the delete/drain sequence and reattach it before re-enabling editing. Do not reuse the disposed instance.
+Only a reconciled success with no post-snapshot work closes/unmounts the editor. `pendingChanges` covers deferred resolved/default/computed changes as well as current edits; a fresh comparison against `savedRevision` also catches subsequent revision writes. Remaining work keeps the live editor and autosave subscription. A response-application failure likewise keeps the draft for reconciliation; retry reload/refetch, not submit. To deliberately keep editing after a clean save, start a fresh engine/autosave session after draft deletion or use a pause/reattach flow. Do not reuse a disposed instance.
 
 ## 2. Form-level variables
 
@@ -455,13 +461,15 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
   const [child, setChild] = useState<FormEngine | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
+  const [reseedError, setReseedError] = useState<string | null>(null);
+  const retryReseed = useRef<(() => void) | null>(null);
   const submitting = useReadable(parent.form.select('phase')) === 'submitting';
 
   // Create once per contract; seed from the parent's value; dispose on unmount
   useEffect(() => {
     const bridge = subformBridges.get(controller)!;
     bridge.child = null; bridge.error = undefined;
-    setChild(null); setInitError(null);
+    setChild(null); setInitError(null); setReseedError(null);
     controller.setBusy('subform:init', true);
     controller.report('subform:init', null);
     let cancelled = false;
@@ -495,6 +503,7 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
         let deferredChild: Json | undefined;
         let reseedGeneration = 0;
         let reseeding = false;
+        let reseedTarget: Json = seed;
         const publishValue = (next: Json) => {
           if (stale()) return;
           if (deepEqual(next, controller.value.get())) { deferredChild = undefined; return; }
@@ -509,15 +518,17 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
         const reseed = (v: Json) => {
           const run = async () => {
             const generation = ++reseedGeneration;
-            reseeding = true; setReloading(true); bridge.child = null;
+            reseedTarget = v;
+            reseeding = true; setReloading(true); setReseedError(null); bridge.child = null;
             try {
               await e.reload({ entity: v ?? {}, policy: 'replace' });
               if (stale() || generation !== reseedGeneration) return;
-              pushed = v; bridge.child = e; bridge.error = undefined;
+              pushed = v; bridge.child = e; bridge.error = undefined; setReseedError(null);
               controller.report('subform:reload', null);
             } catch (error) {
-              if (stale() || generation !== reseedGeneration || errorCode(error) === 'E_SUPERSEDED') return;
+              if (stale() || generation !== reseedGeneration) return; // includes expected superseded older requests
               bridge.child = null; bridge.error = 'Subform could not be reloaded.';
+              setReseedError(bridge.error);            // keep stale content disabled until a successful retry
               controller.report('subform:reload', [{ message: bridge.error }]);
             } finally {
               if (!stale() && generation === reseedGeneration) { reseeding = false; setReloading(false); }
@@ -527,16 +538,18 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
           bridge.ready = ready;
           return ready;
         };
+        retryReseed.current = () => { void reseed(controller.value.get()); };
         const syncBusy = () => controller.setBusy('subform:work', e.form.get().validating || e.form.get().phase === 'loading');
         offs.push(
           // 1. Value: child → parent. One parent write per child commit
           e.revision.subscribe(() => {
-            if (stale() || reseeding) return;          // reload/undo/replay must not create a new parent user edit
+            if (stale() || reseeding || bridge.child !== e) return; // failed/replaying child cannot publish stale values
             publishValue(e.serialize({ mode: 'full' }));
           }),
           // 2. Value: parent → child, for reset, undo, reload and restore
           controller.value.subscribe((v) => {
-            if (!deepEqual(v, pushed)) void reseed(v);
+            const expected = reseeding || bridge.child !== e ? reseedTarget : pushed;
+            if (!deepEqual(v, expected)) void reseed(v); // A→B→A supersedes B even though A equals old pushed
           }),
           // 3. Busy: the child's async validation and loads hold the parent's gate
           e.form.subscribe(syncBusy),
@@ -575,6 +588,7 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
       parent.signal.removeEventListener('abort', abort);
       abort(); offs.forEach(off => off());
       bridge.child = null; bridge.ready = undefined; bridge.publish = undefined; // validation guard closes again
+      retryReseed.current = null;
       controller.setBusy('subform:init', false);
       controller.setBusy('subform:work', false);
     };
@@ -592,7 +606,8 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
   if (!child) return <Spinner />;
   return (
     <FormProvider engine={child}>
-      <fieldset disabled={submitting || reloading}><FormRenderer renderers={childRenderers} /></fieldset>
+      {reseedError && <p role="alert">{reseedError} <button type="button" onClick={() => retryReseed.current?.()}>Retry</button></p>}
+      <fieldset disabled={submitting || reloading || !!reseedError}><FormRenderer renderers={childRenderers} /></fieldset>
       {/* the parent's own messages for this field, but not the per-path ones the child already shows */}
       <FieldMessages messages={feedback.filter(m => !m.subPath)} />
     </FormProvider>
@@ -617,6 +632,7 @@ Things to know:
 - **Severity boundary.** This isolated-registry example maps child notices through `child.severityBase`, preserving info/warning/error instead of upgrading unknown `x-` severities to errors. To preserve custom ranks or legal-gate semantics, share compatible registrations or provide an explicit child-to-parent severity mapping; never forward unknown severity names blindly.
 - **Undo.** Each child commit is a parent write, so the parent's history records it (coalesced per `coalesceMs`). Undo restores the value and re-seeds the child through bridge 2. Leave history off the child to avoid two undo stacks.
 - **Re-seeding resets the child's meta.** A `replace` reload after undo or reset clears the child's touched state. That's usually what you want. If you need to keep it, compute the diff and use `child.applyExternal` instead.
+- **Reseed targets and failures.** Compare parent updates with the active target, not only the last published value, so A→B→A supersedes B. Ignore only stale/older generations; a failure of the current generation keeps the child disabled and its validation guard closed until Retry successfully reloads the latest parent value. The revision listener also refuses to publish from a failed/stale child, even if an internal callback runs while its UI is disabled.
 - **No cross-references.** The parent sees the child's output only as one opaque value. Parent rules and functions can inspect it, but parent paths can't point inside it, and the child can't see the parent except through `context`. If you need more than that, use a dynamic sub-form.
 - **Round-trip.** Bridge 2 seeds the child with what it serialized. That only works if `serializeAs` and outbound transformers in the child contract can be loaded back. Otherwise, store `child.getValues()` instead, and serialize at the parent's submit with an outbound transformer.
 - **Server rendering.** The child is created on the client after mount. For SSR, also render the child on the server and pass its `exportState()` next to the parent's ([16 §19](#19-server-rendered-form)).
