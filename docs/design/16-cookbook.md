@@ -201,7 +201,7 @@ Put contracts together **before** loading (in the CMS, a build step, or the host
 
 ## 14. Submit while invalid
 
-Skip `submit()`: `await target(engine.serialize({ validate: false }))`. Or mark rules `severity: 'warning'` with the `warnings` gate set to `allow` (the default, `submission.gates`) so they don't block ([06 §7](./06-validation.md#7-severity)).
+Skip `submit()`: `await api.save(engine.serialize({ validate: false }))` (the host's API call, not the registered `SubmitTarget` protocol; the host then owns acknowledgement/draft cleanup). Or mark rules `severity: 'warning'` with the `warnings` gate set to `allow` (the default, `submission.gates`) so they don't block ([06 §7](./06-validation.md#7-severity)).
 
 ## 15. Externally derived inputs via `setContext`
 

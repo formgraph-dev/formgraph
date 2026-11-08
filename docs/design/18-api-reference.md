@@ -118,7 +118,7 @@ interface FormEngine<V = Json, Paths extends string = string, Payload = Json> { 
   serialize(opts: { mode: 'full' | 'patch'; validate?: boolean }): Payload | PatchOf<Payload>;
   submit(opts?: { confirm?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitResult>;  // 09 §4; first call's controls govern the shared promise
   cancelSubmit(): void;                                        // cancels even non-cooperative work; no-op when idle (09 §4)
-  reconcileSubmit(reconciliationId: string, opts?: { entity?: Json; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitReconciliation>;   // saved response retry, never calls target (09 §4.2)
+  reconcileSubmit(reconciliationId: string, opts?: { entity?: Json; acknowledgedPaths?: DataPath[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitReconciliation>;   // saved response/coverage retry; rejects on failure, retains id; never calls target (09 §4.2)
   confirm(gate: string): void;                                  // 06 §7.3; valid while the gate's notices stay a subset of those confirmed
   unconfirm(gate: string): void;
   mapExternalErrors(errors: ExternalErrors): void;              // 09 §5

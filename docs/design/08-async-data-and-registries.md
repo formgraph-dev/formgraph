@@ -50,8 +50,11 @@ interface SourceCtx { signal: AbortSignal; context: Json; formId: string; locale
 type AsyncSource<I, O> = (input: I, ctx: SourceCtx) => O | Promise<O>;
 
 type EntitySource = AsyncSource<{ id: Json }, Json>;                                    // 09 §2
-interface SubmitTargetResult { errors?: ExternalErrors; entity?: Json }   // errors: [] means accepted; any present entity (including falsy JSON) is applied
-type SubmitTarget<P = Json> = AsyncSource<{ payload: P; mode: 'full' | 'patch'; confirmed: string[] }, SubmitTargetResult>; // 09 §4; distinct from the engine's SubmitResult; confirmed: gates the user confirmed (06 §7.3)
+interface SubmitTargetResult {
+  errors?: ExternalErrors; entity?: Json;       // errors: [] means accepted; any present JSON entity is applied
+  acknowledgedPaths?: DataPath[];               // exact frozen-form coverage; required with an outbound transformer (09 §4.2)
+}
+type SubmitTarget<P = Json> = AsyncSource<{ payload: P; mode: 'full' | 'patch'; confirmed: string[]; serializedPaths: DataPath[] }, SubmitTargetResult>; // 09 §4; serializedPaths: core coverage before transformation, not a claim about the transformed payload
 ```
 
 The engine wraps every source call the same way: it aborts `signal` when the call is superseded (§3), applies the result only if its generation still matches, treats a synchronous return like a resolved Promise (applied in a later tick), and normalizes a thrown error or rejection into the call's error state and reports it.
@@ -65,6 +68,8 @@ type Transformer<I, O> = (input: I, ctx: TransformCtx) => O;   // synchronous
 type InboundTransformer  = Transformer<{ raw: Json; mapped: Json }, Json>;              // returns values, 09 §2
 type OutboundTransformer<P = Json, O = Json> = Transformer<{ payload: P; mode: 'full' | 'patch'; loaded: Json; values: Json; dirtyPaths: Path[]; confirmed: string[] }, O>;   // 09 §4; P/O inferred for typed contracts (21 §3)
 ```
+
+An outbound transform may omit, rename or synthesize data. Its paired target must return `acknowledgedPaths` identifying the frozen form inputs actually persisted, not guess coverage from output key names or from a successful request. Without a transformer, omitted coverage defaults to `serializedPaths`; explicit coverage can restrict it. `[]` explicitly acknowledges no units; it is not omitted metadata. `serializedPaths` is local integration metadata, not automatically part of the backend request. Missing required or invalid coverage is a saved-but-unreconciled `E_SUBMIT_RESPONSE`, never permission to clear all input edits. The caller may correct coverage via `reconcileSubmit` without saving again ([09 §4.2](./09-loading-and-submission.md#42-acknowledgement-and-response-reconciliation)).
 
 A transformer that throws fails the operation that owns it, writes nothing and never changes values; it is reported once as `E_TRANSFORM_FAILED` with `detail: { kind, id }`:
 
