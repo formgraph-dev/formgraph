@@ -67,6 +67,13 @@ interface ScopeController {          // one array row, or a dataScope group
   focus(): Promise<boolean>;
 }
 
+interface ContentController {                 // `content` nodes (01 §3.6): display only, no value, state or handlers
+  key: RowKeyPath; compiled: CompiledNode;     // the node's position: enclosing row key path + id
+  visible: Readable<boolean>;
+  label: Readable<string | undefined>; description: Readable<string | undefined>;   // resolved text (09)
+  testId: Readable<string>;                    // `prefix:addresses.2.billingIntro` (§8.1)
+}
+
 interface AssetController {          // assets plugin, 07 §2.1
   items: Readable<Array<AssetRef & { id: string }>>;   // status / progress / error per file; `id` is engine-local (kept in meta, not in values)
   add(file: Blob | PlatformFile): void;   // queues as 'pending'; enforces accept / maxBytes / maxFiles
@@ -194,6 +201,7 @@ const renderers = defineRenderers({
   group: { step: WizardStep, section: Section, card: Card, tabs: Tabs, none: Fragment },
   array: { stack: StackArray, table: TableArray },
   'dynamic-group': { none: Fragment },   // optional; otherwise the group entries are used
+  content: { heading: Heading, text: Paragraph, divider: Divider },   // key: ui.variant (01 §3.6)
   fallback: { field: UnknownField, group: Fragment },
 });
 ```
@@ -207,7 +215,7 @@ const renderers = defineRenderers({
   - then `fallback`.
 - **`fallback` is optional** and comes in two forms:
   - **one component**, the catch-all for every node kind: `fallback: Unsupported`. It gets `{ controller, node, children? }` with `node` as the `CompiledNode` union, so it switches on `node.kind` (and must render `children` for containers);
-  - **per kind**, more specific: `fallback: { field: UnknownField, group: Fragment, array?, 'dynamic-group'?, '*'? }`. Each key gets props typed for that kind. `'*'` is the catch-all for kinds not listed; `dynamic-group` falls back to `group` first.
+  - **per kind**, more specific: `fallback: { field: UnknownField, group: Fragment, array?, 'dynamic-group'?, content?, '*'? }`. Each key gets props typed for that kind. `'*'` is the catch-all for kinds not listed; `dynamic-group` falls back to `group` first.
   
   Whatever isn't covered uses the adapter's built-in fallback (§4.2).
 - A renderer gets `{ controller, node, children? }`, where `node` is `controller.compiled.node`, typed for the field type and uses the hooks itself. That way it re-renders only for its own slices.
@@ -254,6 +262,7 @@ A field type can be registered in the engine with no renderer on this client (fo
   - **Dev (fields):** a clearly marked box (dashed border, warning colour) with the field type, the path, the value as truncated JSON (about 200 characters), and a fix hint ("add a renderer, or a contract `fallback`, 01 §3.5"). Raw JSON is fine here; only developers see it.
   - **Prod (fields):** looks like a normal read-only field. Label and description as usual; the value as text (strings, numbers and booleans formatted normally, choice values by their option label); anything else, or an empty value, shows the built-in text `{ key: 'formgraph.unsupported', default: 'Not available on this device' }`, which the host's resolver can translate or reword ([09 §2](./09-localization.md#2-resolution)). Never raw JSON or the type name.
   - **Groups, arrays, dynamic groups (both modes):** render the children, with no wrapper.
+  - **Content (both modes):** `label` then `description` as plain text, with no styling beyond what the platform gives text. The text is static, so there is nothing to hide in production.
 
   Both field fallbacks wire the label, `ids`, `testId` (§8.1), notices and `registerElement` (a focusable element, `tabIndex=-1` on web), so `firstInvalid`, focus and the error summary still reach them. A required, invalid field the user can't edit still shows why submit is blocked.
 - **Overriding the built-ins.** They are defaults only:

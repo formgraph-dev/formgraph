@@ -103,6 +103,7 @@ type DiagnosticPhase = typeof DIAGNOSTIC_PHASES[number];
 | `E_CYCLE` | compile | Cycle among value-writing edges (computed, effects, whenHidden clear, cascade clear/reset, autoSelectSingle, onSelect fill) | [03 §5.2](./03-paths-and-dependency-graph.md#52-cycle-detection) |
 | `E_NOT_ALLOWED` | expand / validate-core / compile / call | An id is referenced outside the contract's `allow` list for that registry; checked where the kind is resolved (macros in expand, evaluators/fieldTypes in validate-core, rest in compile, a precompiled contract's `refs` at `createFormEngine` (call)); takes precedence over unknown-id codes | [04 §4](./04-expressions.md#4-security-model) |
 | `E_INVALID_PATTERN` | compile | A contract regex failed to compile with `registry.regex` (always with the `u` flag) | [05 §2.2](./05-validation.md#22-regex-safety) |
+| `E_TIMEZONE_UNSUPPORTED` | compile | A `date-time` field names an IANA `timezone` but the platform has no `Intl` time zone support (D24); `utc` and `local` still work | [01 §3.3.1](./01-schema-contract.md#331-implied-rules) |
 | `W_UNSAFE_PATTERN` | compile | Best-effort check found nested quantifiers (skipped for linear engines) (*strict → error*) | [05 §2.2](./05-validation.md#22-regex-safety) |
 | `E_DYNAMIC_PATTERN` | compile | A `pattern` rule's `value` is an Expression instead of a literal | [05 §2.2](./05-validation.md#22-regex-safety) |
 | `E_PROVIDER_DEPS_REQUIRED` | compile | Provider source without `options.dependsOn` | [12 §2.3](./12-option-sources-and-cascading.md#23-provider) |

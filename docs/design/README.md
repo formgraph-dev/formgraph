@@ -1,6 +1,6 @@
 # formgraph: Design
 
-Status: **Draft**, pre-1.0 (nothing released yet) · Based on: the v4.0 handoff draft (never published) · Review: [00-design-review.md](./00-design-review.md)
+Status: **Draft**, pre-1.0 (nothing released yet) · Based on: the v4.0 handoff draft (never published)
 
 A headless, metadata-driven form engine. A backend or CMS sends a JSON **contract**, a framework-agnostic **core** (dependency-free TypeScript with its own transactional store) owns all state and behavior, and thin **adapters** bind it to React, Vue, Solid, Svelte, or native renderers.
 
@@ -53,7 +53,6 @@ A headless, metadata-driven form engine. A backend or CMS sends a JSON **contrac
 
 | # | Doc | Covers |
 |---|-----|--------|
-| 00 | [Design Review](./00-design-review.md) | Review of the v4.0 handoff draft and what each finding turned into |
 | 01 | [Schema Contract](./01-schema-contract.md) | Full TypeScript contract, fields, containers, versioning |
 | 02 | [State Model](./02-state-model.md) | Own transactional store, presence-based precedence, path-indexed subscriptions, meta, performance, plugins |
 | 03 | [Paths & Dependency Graph](./03-paths-and-dependency-graph.md) | Path grammar, scoping, row identity, DAG, scheduling |
@@ -71,7 +70,7 @@ A headless, metadata-driven form engine. A backend or CMS sends a JSON **contrac
 | 15 | [Cookbook](./15-cookbook.md) | Patterns built from core primitives: autosave, variables, "Other" options, draft rows, view mode, totals, SSR, … |
 | 16 | [Diagnostics](./16-diagnostics.md) | Diagnostic shape and the catalog of every error and warning code |
 | 17 | [API Reference](./17-api-reference.md) | Every public signature: `loadContract`, `createFormEngine` options, `FormEngine`, controllers, `ArrayHandle`, plugin members |
-| 18 | [Field Type Gaps](./18-field-type-gaps.md) | Open: possible gaps in the core field types (content node, date min/max, nullable boolean, decimals, timezone storage) |
+| 18 | [Field Type Gaps](./18-field-type-gaps.md) | Resolved: content node, date min/max, `minLength`, yes/no recipe, money as a recipe, timezone storage |
 | 19 | [Plugin API Gaps](./19-plugin-api-gaps.md) | Resolved (D28): controller extension, registry-recorded plugin factories, store scoping, submit hooks, text formatter conflicts, no contract hooks |
 | 20 | [Static Type Inference](./20-type-inference.md) | Typed registries by return value, `defineContract`, inferred values/paths/payload, widening for runtime contracts, declaration merging as fallback |
 
@@ -107,6 +106,7 @@ A headless, metadata-driven form engine. A backend or CMS sends a JSON **contrac
 | D26 | **Types flow from values, not global augmentation.** Typed registration returns a wider `Registry<E>` (chained or one object literal); `defineContract(registry, c)` checks ids and config against it; `ValuesOf`/`PathsOf`/`PayloadOf` type the engine. Runtime contracts widen to `Json`. `declare module` is the last-resort fallback for registries whose contents aren't visible at the call site | [20](./20-type-inference.md) |
 | D27 | **Adapters own reactivity.** The core has no signal system of its own. `Readable.get()` reports reads to an observer (`observeReads`, `@formgraph/engine/interop`), and adapters connect it to their framework's native tracking (Solid/Vue/Svelte/Angular computed values and effects; React `useTracked`). Rule: the core may expose integration points, but they're meant for adapter authors, not app code; app code uses its framework's primitives. `engine.batch` groups writes. Framework-free code uses `subscribe` or the optional `@formgraph/engine/reactive` subpath. `Readable` lives in one core module that nothing else depends on internally, so a possible future move to native TC39 Signals (a note only, not planned) stays local | [02 §2.6](./02-state-model.md#26-tracking-reads-for-framework-adapters) |
 | D28 | **Plugins are registry-recorded factories.** `registry.plugin(factory)` registers the field types/validators the plugin declares (`registers`) and records it; each engine creates its own instance with per-engine options (`plugins: { name: opts \| false }`). One registration path, so `loadContract` sees plugin types with no engine. Third-party plugins get a narrow `PluginStore` (own `x-` origins and slices, values), `notices.set`, submit hooks (`before` may stop with an `x-` reason), and field-controller extensions; built-ins keep `PrivilegedPluginStore`. One text formatter (`E_PLUGIN_CONFLICT`). Plugins don't extend the contract format and add no form-level validation hooks | [02 §8.1](./02-state-model.md#81-plugin-api) |
+| D29 | **Display-only `content` node.** A node kind with no value or data path (heading/text/divider/`x-` variants), `conditions.visible` only, its own renderer kind and `ContentController`. Core field types stay the same eight; `date-time` gains `min`/`max`, `text` gains `minLength`, and yes/no-unanswered, money and constants are recipes or macros (D13) | [01 §3.6](./01-schema-contract.md#36-content-nodes) |
 
 ## Package layout (proposed)
 

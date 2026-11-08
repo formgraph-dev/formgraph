@@ -587,3 +587,20 @@ Notes:
 - **Custom `format`.** If you change `format` in the engine, pass the same one to `fieldSelector`.
 - **Third-party renderer sets** that pass the conformance suite already apply `testId`, so the same tests work when you swap renderers.
 - **Prefer roles for buttons and headings** (`getByRole`); use test ids for contract-driven fields, where labels are translated and repeat per row.
+
+## 25. A yes/no question that can be unanswered
+
+A `boolean` field is always `true` or `false`: its empty value is `false`, and `required` means "must be true" (the "accept the terms" case). For a question that starts unanswered and must be answered either way, use a `choice` with two options:
+
+```json
+{ "id": "hasPets", "kind": "field", "fieldType": "choice", "label": "Do you have pets?",
+  "options": { "source": "static", "items": [ { "value": true, "label": "Yes" }, { "value": false, "label": "No" } ] },
+  "conditions": { "required": true },
+  "ui": { "variant": "radio" } }
+```
+
+- The value is `true`, `false` or `null` (unanswered), so `required` means "answered".
+- To demand a specific answer, add an `expr` rule (`{ "var": "./hasPets" }`). Use a plain `boolean` for a checkbox that must be ticked.
+- `choice` isn't affected by checkbox renderers, so nothing changes for existing `boolean` fields.
+
+Macro: `yes-no`.

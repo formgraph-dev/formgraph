@@ -118,6 +118,7 @@ Normalizations are fixed and built in. Macros live in a registry and can be exte
 | `multi-choice-with-none` | `multi-choice` + exclusive-`none` effect | [15 §4](./15-cookbook.md#4-exclusive-none-option) |
 | `carry-forward` | `choice`/`multi-choice` with options filtered by another field's selection | [15 §5](./15-cookbook.md#5-carry-forward-options) |
 | `variable` | Hidden computed field (`visible: false`, `whenHidden: 'exclude'`) | [15 §2](./15-cookbook.md#2-form-level-variables) |
+| `yes-no` | `choice` with static `true` / `false` options and `ui.variant: 'radio'` | [15 §25](./15-cookbook.md#25-a-yesno-question-that-can-be-unanswered) |
 | `list` | `array` whose `item` is one scalar field | [15 §11](./15-cookbook.md#11-multiple-values-for-one-field) |
 | `reset-when` | Effects on the referenced fields that clear or reset this field | [15 §6](./15-cookbook.md#6-reset-a-field-when-another-changes) |
 | `hierarchy` | One `choice` per level with `map` sources keyed by the ancestor path (§7.1) | [12 §2.2](./12-option-sources-and-cascading.md#22-map) |

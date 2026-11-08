@@ -56,6 +56,7 @@ Internally, the engine uses absolute data paths and row key paths ([§1](#1-thre
 - `group` with `dataScope: true` nests its children: `{ [group.id]: { ...children } }`.
 - `array` always nests, and each row is a scope.
 - `dynamic-group` follows `dataScope` the same way a group does.
+- `content` nodes ([01 §3.6](./01-schema-contract.md#36-content-nodes)) have no data key or path: they write nothing and can't be referenced.
 - The compiler reports `E_DUPLICATE_DATA_KEY` when two fields resolve to the same data path.
 
 ## 4. Array row identity

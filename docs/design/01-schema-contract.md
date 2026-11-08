@@ -146,10 +146,14 @@ function describe(f: Field) {
 **Config** is read by the engine and lives **flat on the node**:
 
 ```ts
-interface TextConfig        { maxLength?: number }                       // implied rule, §3.3.1
+interface TextConfig        { minLength?: number; maxLength?: number }   // implied rules, §3.3.1
 interface NumberConfig      { min?: number; max?: number; step?: number; precision?: number }   // min/max: implied rules
 export const GRANULARITIES = ['date', 'time', 'date-time'] as const;
-interface DateTimeConfig    { granularity?: typeof GRANULARITIES[number]; timezone?: string }   // open string, not an enum: 'utc', 'local', or an IANA zone ('Europe/Berlin'); default 'local'
+interface DateTimeConfig    {
+  granularity?: typeof GRANULARITIES[number];
+  timezone?: string;                          // open string, not an enum: 'utc', 'local', or an IANA zone ('Europe/Berlin'); default 'local'
+  min?: string | Expression; max?: string | Expression;   // ISO bounds or live expressions (e.g. `$context.now`); implied rules, §3.3.1
+}
 interface ChoiceConfig {                                                 // see 12
   options?: OptionsSource;            // input may also be a bare SelectOption[] (normalized, 14 §6)
   cascade?: CascadeConfig;
@@ -176,10 +180,10 @@ Every `ui` type (fields, groups, arrays) also accepts `textFormat?: string`: the
 
 | `fieldType` | Value | Config (flat) | `ui` |
 |-------------|-------|---------------|------|
-| `text` | `string` | `maxLength` | `variant`, `rows`, `inputMode`, `mask`, `autocomplete` |
+| `text` | `string` | `minLength`, `maxLength` | `variant`, `rows`, `inputMode`, `mask`, `autocomplete` |
 | `number` | `number \| null` | `min`, `max`, `step`, `precision` | `variant`, `format`, `currency`, `stepper` |
 | `boolean` | `boolean` | | `variant` |
-| `date-time` | `string` (ISO 8601) | `granularity`, `timezone` | `variant`, `displayFormat` |
+| `date-time` | `string` (ISO 8601) | `granularity`, `timezone`, `min`, `max` | `variant`, `displayFormat` |
 | `choice` | `Scalar \| null` | `options`, `cascade`, `autoSelectSingle`, `onSelect`, … ([12](./12-option-sources-and-cascading.md)) | `variant`, `columns` |
 | `multi-choice` | `Scalar[]` | same as `choice`, plus `minSelected`, `maxSelected` | same as `choice` |
 | `asset` | `AssetRef \| null` | `accept`, `maxBytes`, `storeId`, `concurrency` | `variant`, `showPreview` |
@@ -205,9 +209,10 @@ Some config keys imply validation rules. The compiler adds them **before** the f
 
 | Config key | Implied rule (05 §2) | Payload schema ([08 §6](./08-loading-and-submission.md#6-json-schema-export-of-the-submitted-data)) |
 |------------|----------------------|------------------|
-| `text.maxLength` | `max-length` | `maxLength` |
+| `text.minLength` / `maxLength` | `min-length` / `max-length` (an empty string passes `min-length`; use `required` to demand input) | `minLength` / `maxLength` |
 | `number.min` / `max` | `min` / `max` | `minimum` / `maximum` |
 | `number.step` | `step` | `multipleOf` |
+| `date-time.min` / `max` | `min` / `max` (compared as described under value shapes) | `formatMinimum` / `formatMaximum` for literal bounds; expression bounds go to `x-formgraph-unexported` |
 | `multi-choice.minSelected` / `maxSelected` | `min-items` / `max-items` | `minItems` / `maxItems` |
 | any options source | `in-options` (unless `validateInOptions: false`, 12 §4.2) | `enum` for static sources, union of all lists for `map`, omitted for `provider` |
 | `asset.accept` / `maxBytes` | `accept` / `max-bytes` | not exported |
@@ -216,7 +221,16 @@ Some config keys imply validation rules. The compiler adds them **before** the f
 | `multi-asset.maxFiles` | `max-items` | `maxItems` |
 
 Value shapes for complex fields:
-- Date values are **always ISO strings** in state, so they serialize and compare without surprises. `granularity: 'date'` stores `YYYY-MM-DD` with no time or zone.
+- Date values are **always ISO strings** in state, so they serialize and compare without surprises. Storage by `granularity` and `timezone`:
+
+  | | `utc` | IANA zone (`Europe/Berlin`) | `local` |
+  |---|---|---|---|
+  | `date-time` | `2026-10-21T07:00:00Z` | `2026-10-21T09:00:00+02:00` | `2026-10-21T09:00:00` (no offset) |
+  | `date` | `2026-10-21` | `2026-10-21` | `2026-10-21` |
+  | `time` | `07:00:00` | `09:00:00` | `09:00:00` |
+
+  `date` and `time` never carry an offset or zone. The zone id isn't stored with the value: the field's `timezone` config names it. Renderers produce the value (D14), so a renderer for a `utc` or IANA field must include the offset. IANA zones need `Intl` for offsets ([D24](./README.md#key-decisions-adr-summary)); without it, a contract that names one fails at compile with `E_TIMEZONE_UNSUPPORTED`, while `utc` and `local` keep working.
+- **`min` / `max` comparison.** Values with an offset compare as instants. Values without one (`local`, `date`, `time`) compare as strings in field order, which is chronological for ISO forms. A bound is parsed like a value of the field; a date-only bound on a `date-time` field means the start of that day in the field's timezone. An expression bound re-evaluates live and is skipped while it yields `null`. "Now" comes from the host: `{ "min": { "lang": "json-logic", "expr": { "var": "$context.now" } } }` ([04 §3](./04-expressions.md#3-evaluation-scope)); the engine has no clock of its own for contracts.
 - Assets are stored as references, never as blobs:
 
 ```ts
@@ -304,6 +318,40 @@ type FieldFallback = {
 - `readOnly: true` forces read-only while the fallback is in use, for types that can be shown but shouldn't be edited without their real control.
 - Typed contracts ([20 §2](./20-type-inference.md#2-typed-contracts)) check `fallback` against the core type.
 
+### 3.6 Content nodes
+
+A `content` node is display-only: a heading, a paragraph of help text or a divider inside a form. It holds no value.
+
+```ts
+export interface Content extends Extensible {          // not a NodeBase: no field policies (whenHidden, validate*, …)
+  kind: 'content';
+  id: string;                                          // layout and renderer key only; no data path
+  label?: Text;                                        // heading text, or an optional caption
+  description?: Text;                                  // paragraph text
+  layout?: LayoutHints;
+  conditions?: { visible?: Condition };                // the only condition: others are E_UNKNOWN_PROPERTY
+  ui?: ContentUi;
+}
+export interface ContentUi {
+  variant?: 'heading' | 'text' | 'divider' | `x-${string}`;   // default 'text'
+  level?: 1 | 2 | 3 | 4 | 5 | 6;                       // heading level, an accessibility hint
+  textFormat?: string;                                 // opt-in rich text, as on every ui (§3.3)
+}
+```
+
+```json
+{ "kind": "content", "id": "billingIntro", "label": "Billing", "description": "We use this address on your invoice.",
+  "ui": { "variant": "heading", "level": 2 },
+  "conditions": { "visible": { "lang": "json-logic", "expr": { "var": "./needsInvoice" } } } }
+```
+
+- **No data.** A content node has no data path ([03 §3](./03-paths-and-dependency-graph.md#3-data-keys-and-scoping)): it is absent from values, the payload and `toPayloadSchema`, from notices, dirty and touched tracking, and from `counts`. Validation, gates, `firstInvalid` and `submit()` ignore it. Nothing can reference it in a `PathRef` (`E_UNKNOWN_PATH`), though its `id` must be unique like any node id.
+- **Visibility.** `conditions.visible` is evaluated in the enclosing scope, so `./field` works inside array rows. It's a subscriber in the dependency graph, never a dependency.
+- **Where.** A child of the root, a group, a wizard step, a dynamic group's sub-schema or an array item's group. It can't be an array's `item` (an array of content has no values); that is `E_SCHEMA`.
+- **Text** is localized like any node text ([09](./09-localization.md)). `heading` shows `label`, `text` shows `description`, `divider` shows no text (a `label` is an optional caption). Markdown or HTML is only available through `ui.textFormat` or an `x-` variant, so the core stays small (D13).
+- **Rendering.** Renderer kind `content`, looked up by `ui.variant` like other kinds ([10 §4](./10-rendering-and-adapters.md#4-renderer-registry)); its controller is a `ContentController` ([10 §2](./10-rendering-and-adapters.md#2-headless-field-api)). With no renderer, the built-in fallback prints the text ([10 §4.2](./10-rendering-and-adapters.md#42-missing-renderers)).
+- **Version.** A new node kind is a minor change of the contract format ([§7](#7-versioning-and-load-time-validation)); an engine without it rejects the unknown `kind` like any unknown kind. Macros may output content nodes; `fromJsonSchema` doesn't produce them.
+
 ## 4. Layout vs. conditions
 
 ```ts
@@ -344,7 +392,7 @@ export interface Group<N = Node> extends NodeBase {
 
 export interface ArrayNode<N = Node> extends NodeBase {
   kind: 'array';
-  item: N;                      // usually a Group with dataScope semantics implied
+  item: N;                      // usually a Group with dataScope semantics implied; never a Content node (E_SCHEMA)
   defaultValue?: Json[];
   newItem?: Json | Expression;  // template for "add row"
   minItems?: number;
@@ -379,7 +427,7 @@ export interface ArrayUi {
   addLabel?: Text; removeConfirm?: boolean; emptyText?: Text;
 }
 
-export type Node = Field | Group<Node> | ArrayNode<Node> | DynamicGroup;   // Field: §3.2
+export type Node = Field | Group<Node> | ArrayNode<Node> | DynamicGroup | Content;   // Content: §3.6   // Field: §3.2
 ```
 
 The `item` of an array always creates a data scope (a row object), whether or not it is a group. If `item` is a single field, rows are scalars (`string[]`) and the item's path is `.` (the row itself). Its `id` is still required (for error messages, testers, and devtools) but isn't a data key, so it never collides.

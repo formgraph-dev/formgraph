@@ -26,7 +26,7 @@ interface ValidationRule extends Extensible {
 }
 ```
 
-Built-in validator IDs: `required`, `pattern` (literal value only, §2.2), `min`, `max`, `step`, `min-length`, `max-length`, `min-items`, `max-items`, `email`, `url`, `equals` (`PathRef`), `expr` (runs `value` as a boolean Expression), and the engine-added `in-options`. The `assets` plugin adds `accept` and `max-bytes` ([07 §2.1](./07-async-data-and-registries.md#21-asset-stores)). Default messages in slim core avoid plural syntax (`"Minimum items: {count}"`); the `icu` plugin swaps in pluralized ones ([09 §2.1](./09-localization.md#21-formatter)). Several are implied by field config ([01 §3.3.1](./01-schema-contract.md#331-implied-rules)).
+Built-in validator IDs: `required`, `pattern` (literal value only, §2.2), `min`, `max` (numbers and `date-time` values, [01 §3.3.1](./01-schema-contract.md#331-implied-rules)), `step`, `min-length`, `max-length`, `min-items`, `max-items`, `email`, `url`, `equals` (`PathRef`), `expr` (runs `value` as a boolean Expression), and the engine-added `in-options`. The `assets` plugin adds `accept` and `max-bytes` ([07 §2.1](./07-async-data-and-registries.md#21-asset-stores)). Default messages in slim core avoid plural syntax (`"Minimum items: {count}"`); the `icu` plugin swaps in pluralized ones ([09 §2.1](./09-localization.md#21-formatter)). Several are implied by field config ([01 §3.3.1](./01-schema-contract.md#331-implied-rules)).
 
 Custom validators:
 

@@ -178,6 +178,8 @@ interface ArrayController extends FieldController<Json[]>, ArrayHandle {
   row(key: RowKey): ScopeController;
 }
 
+interface ContentController { key: RowKeyPath; compiled: CompiledNode; visible: Readable<boolean>; label: Readable<string | undefined>; description: Readable<string | undefined>; testId: Readable<string> }   // content nodes (01 §3.6, 10 §2)
+
 interface ScopeController {                                     // array row or dataScope group (10 §2)
   path: Readable<DataPath>; key: RowKeyPath;
   field(relPath: PathRef): FieldController;
@@ -254,8 +256,9 @@ defineRenderers<C>(map: {
   group?: Record<string, C>;                    // key: ui.variant, or `step` / `step:variant`
   array?: Record<string, C>;                    // key: ui.variant
   'dynamic-group'?: Record<string, C>;          // falls back to group entries
+  content?: Record<string, C>;                  // key: ui.variant (01 §3.6)
   fallback?: C | {                              // one component = catch-all for every kind (10 §4)
-    field?: C; group?: C; array?: C;
+    field?: C; group?: C; array?: C; content?: C;
     'dynamic-group'?: C;                        // falls back to `group` first
     '*'?: C;                                    // catch-all for kinds not listed
   };                                            // uncovered kinds → the adapter's built-in fallback (10 §4.2)
