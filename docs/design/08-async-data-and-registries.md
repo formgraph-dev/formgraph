@@ -1,43 +1,43 @@
-# 07 · Async Data & Registries
+# 08 · Async Data & Registries
 
 [← Index](./README.md) · Addresses review items B4, B5
 
 ## 1. Registries
 
-All registries share one shape: a typed `Map<string, T>` with `register`, `get`, `has`. The registry also has typed registration methods (`fieldType`, `validator`, `severity`, …, or one object literal to `createRegistry`) that return it with a wider `Registry<E>` type, so contracts can be type-checked against it ([20 §1](./20-type-inference.md#1-typed-registries)); `register` itself is untyped. Everything is registered on a `Registry`, never on an engine; `loadContract` and `createFormEngine({ registry })` receive it.
+All registries share one shape: a typed `Map<string, T>` with `register`, `get`, `has`. The registry also has typed registration methods (`fieldType`, `validator`, `severity`, …, or one object literal to `createRegistry`) that return it with a wider `Registry<E>` type, so contracts can be type-checked against it ([21 §1](./21-type-inference.md#1-typed-registries)); `register` itself is untyped. Everything is registered on a `Registry`, never on an engine; `loadContract` and `createFormEngine({ registry })` receive it.
 
 - **Append-only.** Registering a new id is always allowed; registering an id that already exists in the same registry throws `E_REGISTRY_DUPLICATE`, so two plugins can't silently override each other. A compiled schema keeps what it resolved; later registrations don't change running engines.
 - **Overrides use a child.** `createRegistry({ parent })` looks up its own entries first, then the parent's, so a child can replace a parent id (tests, tenants, overriding a built-in validator).
-- **Per engine.** `createFormEngine` wraps the host's registry in its own child; plugins ([02 §8.1](./02-state-model.md#81-plugin-api)) are recorded on the registry as factories (`registry.plugin(factory)`, which also registers the types and validators they declare), and each engine makes its own instances, so several engines can share one host registry without sharing plugin state.
+- **Per engine.** `createFormEngine` wraps the host's registry in its own child; plugins ([03 §8.1](./03-state-model.md#81-plugin-api)) are recorded on the registry as factories (`registry.plugin(factory)`, which also registers the types and validators they declare), and each engine makes its own instances, so several engines can share one host registry without sharing plugin state.
 
 | Registry | Key in contract | Implementation type | Allow-listable |
 |----------|-----------------|---------------------|----|
 | `fieldTypes` | `fieldType` (`x-*`) | `{ config, ui, value, empty, payloadSchema? }` (01 §3.4) | yes |
-| `macros` | `MacroNode.macro` | `Macro` (14 §3) | yes |
-| `origins` | `setValue({ origin })` (`x-*`) | `{ extends: Origin } & Partial<OriginPolicy>` (06 §2.1) | no |
-| `severities` | `severity` on rules, notices, external errors (`x-*`) | `{ extends: CoreSeverity; rank?: number; gate?: string }` (05 §7.6) | no |
+| `macros` | `MacroNode.macro` | `Macro` (15 §3) | yes |
+| `origins` | `setValue({ origin })` (`x-*`) | `{ extends: Origin } & Partial<OriginPolicy>` (07 §2.1) | no |
+| `severities` | `severity` on rules, notices, external errors (`x-*`) | `{ extends: CoreSeverity; rank?: number; gate?: string }` (06 §7.6) | no |
 | `migrations` | `schemaVersion` major | `Migration` (01 §7.2) | no |
-| `evaluators` | `Expression.lang` | `Evaluator` (04) | yes |
+| `evaluators` | `Expression.lang` | `Evaluator` (05) | yes |
 | `functions` | `fn` name / JSON Logic op | `(…args) => Json` | yes |
-| `validators` | `ValidationRule.type` | `Validator` (05) | yes |
-| `validationSources` | `AsyncValidationRule.sourceId` | `ValidationSource` (05) | yes |
+| `validators` | `ValidationRule.type` | `Validator` (06) | yes |
+| `validationSources` | `AsyncValidationRule.sourceId` | `ValidationSource` (06) | yes |
 | `providers` | `ProviderOptions.providerId` | `OptionsProvider` (below) | yes |
 | `queryTransformers` | `queryTransformerId` | `QueryTransformer` (§2) | yes |
 | `resultTransformers` | `resultTransformerId` | `ResultTransformer` (§2) | yes |
 | `selectedResolvers` | `resolveSelectedSourceId` | `SelectedResolver` (§2) | yes |
 | `schemaSources` | `DynamicGroup.schemaSourceId` | `SchemaSource` (§5) | yes |
-| `entitySources` | `LoadConfig.entitySourceId` | `EntitySource` (below, 08 §2) | yes |
-| `inboundTransformers` | `LoadConfig.transformerId` | `InboundTransformer` (below, 08 §2) | yes |
-| `outboundTransformers` | `SubmissionConfig.transformerId` | `OutboundTransformer` (below, 08 §4) | yes |
-| `submitTargets` | `SubmissionConfig.targetId` | `SubmitTarget` (below, 08 §4) | yes |
+| `entitySources` | `LoadConfig.entitySourceId` | `EntitySource` (below, 09 §2) | yes |
+| `inboundTransformers` | `LoadConfig.transformerId` | `InboundTransformer` (below, 09 §2) | yes |
+| `outboundTransformers` | `SubmissionConfig.transformerId` | `OutboundTransformer` (below, 09 §4) | yes |
+| `submitTargets` | `SubmissionConfig.targetId` | `SubmitTarget` (below, 09 §4) | yes |
 | `assetStores` | `AssetConfig.storeId` | `AssetStore` (§2.1) | yes |
-| `localeSources` | `FormContract.localeSourceId` | `LocaleSource` (09 §3.3) | yes |
-| `textFormatters` | `ui.textFormat` | `Transformer<{ text: string }, unknown>` (§1.1; renderer-specific output, 09 §2) | yes |
+| `localeSources` | `FormContract.localeSourceId` | `LocaleSource` (10 §3.3) | yes |
+| `textFormatters` | `ui.textFormat` | `Transformer<{ text: string }, unknown>` (§1.1; renderer-specific output, 10 §2) | yes |
 | `effectHandlers` | `Effect.action` (`x-*`) | `EffectHandler` | yes |
-| `renderers` | `fieldType` / `ui.variant` / `step` | adapter-specific (10) | no |
-| `regex` | — (all contract patterns) | `RegexEngine` (05 §2.2); a single slot, not a map, inherited from the parent | no |
+| `renderers` | `fieldType` / `ui.variant` / `step` | adapter-specific (11) | no |
+| `regex` | — (all contract patterns) | `RegexEngine` (06 §2.2); a single slot, not a map, inherited from the parent | no |
 
-A contract id with no matching registration is `E_UNKNOWN_REGISTRY_ID` at compile time, naming the registry. Allow-listable registries can be restricted per contract with `allow` (`E_NOT_ALLOWED` takes precedence, [04 §4](./04-expressions.md#4-security-model)).
+A contract id with no matching registration is `E_UNKNOWN_REGISTRY_ID` at compile time, naming the registry. Allow-listable registries can be restricted per contract with `allow` (`E_NOT_ALLOWED` takes precedence, [05 §4](./05-expressions.md#4-security-model)).
 
 Every `*Source`, `provider`, `store`, and `target` is just a registered function. It may read a network API, a bundled JSON file, the file system, IndexedDB, a native module, a worker, or an in-memory array. The engine only sees its inputs and outputs (§4).
 
@@ -49,8 +49,8 @@ Every async source (providers, selected resolvers, schema, entity, validation an
 interface SourceCtx { signal: AbortSignal; context: Json; formId: string; locale: LocaleTag }
 type AsyncSource<I, O> = (input: I, ctx: SourceCtx) => O | Promise<O>;
 
-type EntitySource = AsyncSource<{ id: Json }, Json>;                                    // 08 §2
-type SubmitTarget<P = Json> = AsyncSource<{ payload: P; mode: 'full' | 'patch'; confirmed: string[] }, SubmitResult>; // 08 §4; SubmitResult = { errors?, entity? }; confirmed: gates the user confirmed (05 §7.3)
+type EntitySource = AsyncSource<{ id: Json }, Json>;                                    // 09 §2
+type SubmitTarget<P = Json> = AsyncSource<{ payload: P; mode: 'full' | 'patch'; confirmed: string[] }, SubmitResult>; // 09 §4; SubmitResult = { errors?, entity? }; confirmed: gates the user confirmed (06 §7.3)
 ```
 
 The engine wraps every source call the same way: it aborts `signal` when the call is superseded (§3), applies the result only if its generation still matches, treats a synchronous return like a resolved Promise (applied in a later tick), and normalizes a thrown error or rejection into the call's error state and reports it.
@@ -61,8 +61,8 @@ Transformers are synchronous and share one generic:
 interface TransformCtx { context: Json; formId: string; locale: LocaleTag }
 type Transformer<I, O> = (input: I, ctx: TransformCtx) => O;   // synchronous
 
-type InboundTransformer  = Transformer<{ raw: Json; mapped: Json }, Json>;              // returns values, 08 §2
-type OutboundTransformer<P = Json, O = Json> = Transformer<{ payload: P; mode: 'full' | 'patch'; loaded: Json; values: Json; dirtyPaths: Path[]; confirmed: string[] }, O>;   // 08 §4; P/O inferred for typed contracts (20 §3)
+type InboundTransformer  = Transformer<{ raw: Json; mapped: Json }, Json>;              // returns values, 09 §2
+type OutboundTransformer<P = Json, O = Json> = Transformer<{ payload: P; mode: 'full' | 'patch'; loaded: Json; values: Json; dirtyPaths: Path[]; confirmed: string[] }, O>;   // 09 §4; P/O inferred for typed contracts (21 §3)
 ```
 
 A transformer that throws fails the operation that owns it, writes nothing and never changes values; it is reported once as `E_TRANSFORM_FAILED` with `detail: { kind, id }`:
@@ -83,7 +83,7 @@ const engine = createFormEngine({ contract, registry, context });
 
 ## 2. Provider options
 
-Options supplied by a registered **provider** (`source: 'provider'`, [12 §2.3](./12-option-sources-and-cascading.md#23-provider)):
+Options supplied by a registered **provider** (`source: 'provider'`, [13 §2.3](./13-option-sources-and-cascading.md#23-provider)):
 
 ```ts
 interface ProviderOptions extends Extensible {
@@ -98,7 +98,7 @@ interface ProviderOptions extends Extensible {
 }
 ```
 
-What happens to the field's value when a dependency changes (`cascade.onChange`), and the static and map sources, are covered in [12 · Option Sources & Cascading](./12-option-sources-and-cascading.md).
+What happens to the field's value when a dependency changes (`cascade.onChange`), and the static and map sources, are covered in [13 · Option Sources & Cascading](./13-option-sources-and-cascading.md).
 
 ```ts
 type QueryTransformer  = Transformer<{ state: Json; query?: string; deps: Record<string, Json> }, Json | null>;  // null = skip
@@ -111,9 +111,9 @@ type ResultTransformer = Transformer<{ raw: unknown; state: Json; query?: string
 - A provider may return a value directly (for example from an in-memory table) or a Promise. The engine treats both the same way: the result is applied in a new tick, so option loading never blocks typing.
 - `nextState === null` means there are no more pages. The engine never interprets the state, so offset, cursor, time window, or geo radius pagination all fit.
 
-A query transformer can return `null` to **skip the call** (for example a partial postcode). Options become `[]` with `status: 'idle'` and any in-flight load is aborted. The field's value is **left alone**: no cascade invalidation runs and the validity check is deferred until a real query produces options ([12 §4](./12-option-sources-and-cascading.md#4-invalidation)).
+A query transformer can return `null` to **skip the call** (for example a partial postcode). Options become `[]` with `status: 'idle'` and any in-flight load is aborted. The field's value is **left alone**: no cascade invalidation runs and the validity check is deferred until a real query produces options ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)).
 
-Option state lives in `meta[path].options` (internal: `{ items, state, status, error, query, generation }`). It isn't stored in values. Renderers see it through the `OptionsState` handle defined in [12 §9](./12-option-sources-and-cascading.md#9-renderer-view).
+Option state lives in `meta[path].options` (internal: `{ items, state, status, error, query, generation }`). It isn't stored in values. Renderers see it through the `OptionsState` handle defined in [13 §9](./13-option-sources-and-cascading.md#9-renderer-view).
 
 **Selected-label problem:** a loaded value like `"US"` may not be on the current page of options. Result transformers can return `selected?: SelectOption[]`, or the field can set `resolveSelectedSourceId` to load labels for the current values. Until a label is resolved, renderers show the raw value.
 
@@ -123,7 +123,7 @@ type SelectedResolver = AsyncSource<{ values: Scalar[]; deps: Record<string, Jso
 
 ### 2.1 Asset stores
 
-Provided by the `assets` plugin ([02 §8](./02-state-model.md#8-plugins)), which the default entry installs. It registers the reserved `asset` / `multi-asset` types, the `accept` / `max-bytes` validators and the field's `AssetController`. On slim core without it, a contract with an asset field fails at compile with `E_PLUGIN_MISSING`. Asset fields hand files to a registered store ([01 §3.3](./01-schema-contract.md#33-core-config-and-ui)):
+Provided by the `assets` plugin ([03 §8](./03-state-model.md#8-plugins)), which the default entry installs. It registers the reserved `asset` / `multi-asset` types, the `accept` / `max-bytes` validators and the field's `AssetController`. On slim core without it, a contract with an asset field fails at compile with `E_PLUGIN_MISSING`. Asset fields hand files to a registered store ([01 §3.3](./01-schema-contract.md#33-core-config-and-ui)):
 
 ```ts
 type PlatformFile = { uri: string; name: string; size: number; mime: string };   // RN/Tauri/native file handle
@@ -142,7 +142,7 @@ Lifecycle of an `AssetRef`:
 | `ready` | The store resolved. `ref` and `meta` are set | The engine, from the store's result |
 | `error` | The store threw or was aborted for a reason other than removal. `error` holds the message. The renderer offers retry (back to `pending`) or remove | The engine |
 
-Loaded assets arrive as `ready`. Removing a file aborts its store call. Renderers drive this through the field's `AssetController` ([10 §2](./10-rendering-and-adapters.md#2-headless-field-api)).
+Loaded assets arrive as `ready`. Removing a file aborts its store call. Renderers drive this through the field's `AssetController` ([11 §2](./11-rendering-and-adapters.md#2-headless-field-api)).
 
 ```ts
 interface AssetConfig {   // 01 §3.3; adds:
@@ -150,8 +150,8 @@ interface AssetConfig {   // 01 §3.3; adds:
 }
 ```
 
-- **Submit and `next()`**: the plugin implements the core pending-work gate ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)), reporting `busy` for `pending` / `processing` and `failed` for `error`. Core treats `busy` like in-flight async validation ([05 §4](./05-validation.md#4-async-validation)): with `submission.awaitAsync` (default `true`) it waits; with `awaitAsync: false` it returns `{ ok: false, reason: 'assets-pending' }`. `failed` blocks submit like a validation error (`E_ASSET_FAILED` on the field) until retried or removed.
-- **Snapshots** (through the core `toSnapshot` hook) keep only `ready` refs. `pending`, `processing`, and `error` entries hold local file handles that can't be serialized, so they are left out, and the user re-adds those files after `restore` ([08 §8](./08-loading-and-submission.md#8-snapshots-drafts)).
+- **Submit and `next()`**: the plugin implements the core pending-work gate ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)), reporting `busy` for `pending` / `processing` and `failed` for `error`. Core treats `busy` like in-flight async validation ([06 §4](./06-validation.md#4-async-validation)): with `submission.awaitAsync` (default `true`) it waits; with `awaitAsync: false` it returns `{ ok: false, reason: 'assets-pending' }`. `failed` blocks submit like a validation error (`E_ASSET_FAILED` on the field) until retried or removed.
+- **Snapshots** (through the core `toSnapshot` hook) keep only `ready` refs. `pending`, `processing`, and `error` entries hold local file handles that can't be serialized, so they are left out, and the user re-adds those files after `restore` ([09 §8](./09-loading-and-submission.md#8-snapshots-drafts)).
 
 ## 3. Load lifecycle
 
@@ -174,7 +174,7 @@ registry.providers.register('countries', fn, { varies: ['locale'] });   // defau
 ```
 
 - Every declared input is added to the cache key: `hash(providerId, transformedQuery, …, locale?, context?)`.
-- `setLocale` (after the switch, [09 §3.3](./09-localization.md#33-loading-bundles-separately)) and `setContext` reload the open option lists whose provider varies on that input; closed lists reload on next open. Values are handled like any option reload ([12 §4](./12-option-sources-and-cascading.md#4-invalidation)).
+- `setLocale` (after the switch, [10 §3.3](./10-localization.md#33-loading-bundles-separately)) and `setContext` reload the open option lists whose provider varies on that input; closed lists reload on next open. Values are handled like any option reload ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)).
 - `varies: []` opts out for providers that ignore both, so their entries survive locale and context changes.
 - `selectedResolvers` take the same option and follow the same rule.
 
@@ -184,11 +184,11 @@ registry.providers.register('countries', fn, { varies: ['locale'] });   // defau
 - The shared call keeps a **subscriber count**. A subscriber leaves when its field supersedes the request (new deps or query), unmounts under `trigger: 'open'`, or is disposed. The call is aborted only when **no subscribers are left**.
 - Each subscriber keeps its own generation. When the shared result arrives, it is applied only to subscribers whose generation still matches the one they joined with; the rest ignore it.
 
-On a `dependsOn` change: abort, reset `state` to `initialState`, clear `items`, then reload if the trigger condition is met. The field's value is handled by the cascade rules in [12 §4](./12-option-sources-and-cascading.md#4-invalidation).
+On a `dependsOn` change: abort, reset `state` to `initialState`, clear `items`, then reload if the trigger condition is met. The field's value is handled by the cascade rules in [13 §4](./13-option-sources-and-cascading.md#4-invalidation).
 
 Errors set `status:'error'`, and the view exposes `retry()`. Retry policy (backoff) belongs to the provider, not the engine.
 
-**Server rendering.** `exportState()` includes settled option cache entries and loaded sub-schemas, and `resume` seeds the cache with them, so the client makes no fetch the server already made ([08 §9](./08-loading-and-submission.md#9-server-rendering)). Entries keep their `ttlMs`, counted from the client's resume. On the server, debounced and async-validation calls aren't started.
+**Server rendering.** `exportState()` includes settled option cache entries and loaded sub-schemas, and `resume` seeds the cache with them, so the client makes no fetch the server already made ([09 §9](./09-loading-and-submission.md#9-server-rendering)). Entries keep their `ttlMs`, counted from the client's resume. On the server, debounced and async-validation calls aren't started.
 
 ## 4. The engine does no I/O
 
@@ -208,12 +208,12 @@ Lifecycle when the discriminator value changes:
    - `discard` (default): remove the old sub-schema's keys from **every layer** (`default`, `loaded`, and `current`) plus `meta` and `errors`, so a loaded value can't resurface if a later sub-schema declares the same key. Removing them from `loaded` also means they are no longer in the baseline, so they don't count as dirty and aren't sent as removed in `patch` mode.
    - `stash`: move them (from every layer, as above) to `meta.stash[groupPath][oldDiscriminator]`, and restore them if the user switches back.
 5. Defaults from the new sub-schema are merged into `default`.
-6. Results are cached per discriminator value, at most `schemaCache` (default 10) per group, least recently used evicted. The new nodes' controllers, validators and option state compile lazily; their graph edges and defaults are added eagerly in the graft ([02 §6.3](./02-state-model.md#63-lazy-compile)).
+6. Results are cached per discriminator value, at most `schemaCache` (default 10) per group, least recently used evicted. The new nodes' controllers, validators and option state compile lazily; their graph edges and defaults are added eagerly in the graft ([03 §6.3](./03-state-model.md#63-lazy-compile)).
 
 If attaching would exceed `limits.nodes` (counting attached sub-schemas only, [01 §7.4](./01-schema-contract.md#74-limits)), or the result fails any load step, the group gets `status: 'error'` with that diagnostic (e.g. `E_LIMIT_EXCEEDED`), and the previous sub-schema stays attached.
 
-**The graft is a trusted structural tick.** Steps 3–5 commit as one transaction that behaves like origin `reset` ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)): no effects and no cascade invalidation run for the removed or defaulted values (the new children start from their own defaults, so there is nothing to invalidate). Computed values, conditions, and option sources of the new children are evaluated normally.
+**The graft is a trusted structural tick.** Steps 3–5 commit as one transaction that behaves like origin `reset` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): no effects and no cascade invalidation run for the removed or defaulted values (the new children start from their own defaults, so there is nothing to invalidate). Computed values, conditions, and option sources of the new children are evaluated normally.
 
-**History.** The graft commit carries the history flag `clear` ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)). The earlier discriminator write was a normal recorded step, but replaying it can't bring back a sub-schema whose values were already discarded from every layer.
+**History.** The graft commit carries the history flag `clear` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). The earlier discriminator write was a normal recorded step, but replaying it can't bring back a sub-schema whose values were already discarded from every layer.
 
-The same mechanism handles loading: when a loaded entity already has a discriminator, the schema load starts **during** loading, and the form only becomes `ready` once both have resolved. `restore` applies discriminators first and waits for their schemas before writing the rest; the ordering is defined in [08 §8.2](./08-loading-and-submission.md#82-restore-rules).
+The same mechanism handles loading: when a loaded entity already has a discriminator, the schema load starts **during** loading, and the form only becomes `ready` once both have resolved. `restore` applies discriminators first and waits for their schemas before writing the rest; the ordering is defined in [09 §8.2](./09-loading-and-submission.md#82-restore-rules).

@@ -1,4 +1,4 @@
-# 03 · Paths & Dependency Graph
+# 04 · Paths & Dependency Graph
 
 [← Index](./README.md) · Addresses review items P1, P2, P3, P4
 
@@ -34,8 +34,8 @@ References in the contract (`discriminator`, `dependsOn`, expression `var`s, eff
 | `./items[*].qty` · `/items[*].qty` | All rows of an array (aggregations, read-only) |
 | `$row` | The current array row object (alias of `.` inside a row) |
 | `$index` | The current row index (read-only, expression scope only) |
-| `$context.role` | Host context ([04 §3](./04-expressions.md#3-evaluation-scope)) |
-| `$option` · `$selected` | The option being tested by an options `filter` or `disableWhen`, and the option just picked in `onSelect` ([12](./12-option-sources-and-cascading.md)). Only available in those expressions |
+| `$context.role` | Host context ([05 §3](./05-expressions.md#3-evaluation-scope)) |
+| `$option` · `$selected` | The option being tested by an options `filter` or `disableWhen`, and the option just picked in `onSelect` ([13](./13-option-sources-and-cascading.md)). Only available in those expressions |
 
 Rules:
 - **A bare name (`email`, `addresses.city`) is a compile error** (`E_IMPLICIT_PATH`). There's no lexical lookup and no `strict: false` escape hatch, so adding a field later can't silently change what an existing expression refers to.
@@ -51,7 +51,7 @@ Internally, the engine uses absolute data paths and row key paths ([§1](#1-thre
 
 ## 3. Data keys and scoping
 
-- A field's **data key** is its `id`. `serializeAs` only affects the outbound/inbound mapping ([08](./08-loading-and-submission.md)).
+- A field's **data key** is its `id`. `serializeAs` only affects the outbound/inbound mapping ([09](./09-loading-and-submission.md)).
 - `group` is **transparent** by default: its children write into the parent scope. This suits sections and wizard steps, which are layout, not data.
 - `group` with `dataScope: true` nests its children: `{ [group.id]: { ...children } }`.
 - `array` always nests, and each row is a scope.
@@ -72,7 +72,7 @@ Internally, the engine uses absolute data paths and row key paths ([§1](#1-thre
 
 ### 5.1 Nodes and edges
 
-Graph nodes are **schema paths** combined with a *facet* (`FACETS`, [01 §7.3](./01-schema-contract.md#73-compile)): `value`, `visible`, `disabled`, `read-only`, `required`, `validation`, `options`, `computed`, `default` (expression defaults, [06 §3.1](./06-effects-and-computed.md#31-expression-defaults-replaces-mode-initial)), `label` / `message` (when text params use expressions). The `read-only` facet comes from the `conditions.readOnly` key. An options source's `filter`, `disableWhen`, map `key`, and `dependsOn` all feed the `options` facet.
+Graph nodes are **schema paths** combined with a *facet* (`FACETS`, [01 §7.3](./01-schema-contract.md#73-compile)): `value`, `visible`, `disabled`, `read-only`, `required`, `validation`, `options`, `computed`, `default` (expression defaults, [07 §3.1](./07-effects-and-computed.md#31-expression-defaults-replaces-mode-initial)), `label` / `message` (when text params use expressions). The `read-only` facet comes from the `conditions.readOnly` key. An options source's `filter`, `disableWhen`, map `key`, and `dependsOn` all feed the `options` facet.
 
 An edge `A.value → B.facet` exists when B's facet expression reads A. Edges come from:
 1. **Inference:** the compiler walks parsed expressions and collects `var` references (each evaluator plugin must implement `collectDeps(expr)`).
@@ -101,7 +101,7 @@ An edge from `items[*].qty` to `total.computed` means a change in any row (or ad
 
 ### 5.4 Dynamic sub-schemas
 
-When a `dynamic-group` attaches a sub-schema ([07 §5](./07-async-data-and-registries.md#5-dynamic-sub-forms)), the engine compiles it, merges its nodes and edges into the graph, re-runs the cycle check (§5.2) over the merged graph, and rebuilds the topological order. Detaching removes them the same way. Diagnostics from the sub-schema use the `dynamic-group`'s pointer as `location.pointer`, with `location.subSchema: { groupPath, discriminator, pointer }` locating the node inside the sub-schema ([16 §1](./16-diagnostics.md#1-shape)). A sub-schema that fails (including `E_CYCLE`) isn't attached.
+When a `dynamic-group` attaches a sub-schema ([08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)), the engine compiles it, merges its nodes and edges into the graph, re-runs the cycle check (§5.2) over the merged graph, and rebuilds the topological order. Detaching removes them the same way. Diagnostics from the sub-schema use the `dynamic-group`'s pointer as `location.pointer`, with `location.subSchema: { groupPath, discriminator, pointer }` locating the node inside the sub-schema ([17 §1](./17-diagnostics.md#1-shape)). A sub-schema that fails (including `E_CYCLE`) isn't attached.
 
 ## 6. Scheduler
 
@@ -116,7 +116,7 @@ tick(writes):
       dirty = dependents(pending), in topo order
       for facet in dirty:
         re-evaluate; if changed → add its dependents to dirty (still in topo order)
-      effects = effects triggered by pending whose origin policy allows it (06 §2.1)
+      effects = effects triggered by pending whose origin policy allows it (07 §2.1)
       pending = writes produced by effects, each with chainDepth = cause's chainDepth + 1
       drop writes with chainDepth > limits.effectDepth (E_EFFECT_DEPTH, logged with the chain)
     schedule sync validations for affected paths (by trigger mode)

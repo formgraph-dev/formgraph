@@ -1,4 +1,4 @@
-# 14 · Macros
+# 15 · Macros
 
 [← Index](./README.md)
 
@@ -6,11 +6,11 @@
 
 Macros keep the **core contract small** while letting authors write common patterns briefly. A macro is a node that is **expanded at load time into core nodes** before compiling. The engine at runtime never sees a macro.
 
-Use a macro when a pattern is already expressible with core primitives, but is verbose or easy to get wrong by hand ([15 · Cookbook](./15-cookbook.md) has the long forms). If something *isn't* expressible with core primitives, it needs a core change, not a macro.
+Use a macro when a pattern is already expressible with core primitives, but is verbose or easy to get wrong by hand ([16 · Cookbook](./16-cookbook.md) has the long forms). If something *isn't* expressible with core primitives, it needs a core change, not a macro.
 
 ## 2. Contract
 
-A macro node has a `macro` key instead of `kind`. An unregistered `macro` id is `E_UNKNOWN_MACRO` (a macro excluded by `allow` is `E_NOT_ALLOWED`, checked in expand, [04 §4](./04-expressions.md#4-security-model)):
+A macro node has a `macro` key instead of `kind`. An unregistered `macro` id is `E_UNKNOWN_MACRO` (a macro excluded by `allow` is `E_NOT_ALLOWED`, checked in expand, [05 §4](./05-expressions.md#4-security-model)):
 
 ```json
 { "macro": "choice-with-other", "id": "source", "label": "How did you hear about us?",
@@ -46,7 +46,7 @@ interface MacroContext {
   expand(node: MacroNode): Node[]; // call another registered macro (§5.1); returns core nodes
 }
 
-registry.macros.register(choiceWithOther);   // the shared registry (07 §1); no engine needed
+registry.macros.register(choiceWithOther);   // the shared registry (08 §1); no engine needed
 ```
 
 There is no access to the rest of the contract: a macro sees only its own node, so its output depends on nothing else.
@@ -68,8 +68,8 @@ detect → migrate → validate input → normalize → expand macros (+ normali
 1. **Core output only.** `expand` returns core nodes. Output that contains `macro` nodes is an error (`E_MACRO_NESTED`). Expansion is one pass, with no fixpoint. Macros reuse other macros only by calling them explicitly (§5.1).
 2. **Pure and synchronous.** No I/O, no randomness, no clock, no access to `context` or to the rest of the contract. The same input always gives the same output, so expansions are cached by `hash(macro node, macro id including @MAJOR, macro package version)`.
 3. **Scoped ids.** Every node an expansion returns needs an id that is unique in its data scope. Ids can come from arguments (like `hierarchy`'s `levels[].id`) or be derived with `ctx.uniqueId(hint)`, which is deterministic: `${node.id}__${hint}` from the macro node's own `id` (for example `source__other`). Collisions **within one expansion** (including `ctx.expand` calls, and the same hint used twice) are `E_MACRO_ID_COLLISION`. Collisions with nodes outside the expansion are caught by the compiler as `E_DUPLICATE_DATA_KEY`, whose `location.source` names the macro. When no output node reuses the macro's own `id`, that id is only used in error messages, origins, and `uniqueId`.
-4. **Errors point to the source.** Expansion records where each generated node came from in a **side map** (§8), never on the node itself, so expanded contracts stay valid, clean JSON. Diagnostics on those nodes use it to refer to the macro ("in macro `choice-with-other` at /structure/3"), not to generated ids ([16 §1](./16-diagnostics.md#1-shape)).
-5. **Data shape is part of the macro's contract.** A macro's documentation must state the data paths it produces, because they appear in submitted data and in `toPayloadSchema` ([08 §6](./08-loading-and-submission.md#6-json-schema-export-of-the-submitted-data)). Changing them is a breaking change to the macro.
+4. **Errors point to the source.** Expansion records where each generated node came from in a **side map** (§8), never on the node itself, so expanded contracts stay valid, clean JSON. Diagnostics on those nodes use it to refer to the macro ("in macro `choice-with-other` at /structure/3"), not to generated ids ([17 §1](./17-diagnostics.md#1-shape)).
+5. **Data shape is part of the macro's contract.** A macro's documentation must state the data paths it produces, because they appear in submitted data and in `toPayloadSchema` ([09 §6](./09-loading-and-submission.md#6-json-schema-export-of-the-submitted-data)). Changing them is a breaking change to the macro.
 6. **Versioned ids.** Breaking changes ship as a new id with an `@MAJOR` suffix (`choice-with-other@2`). Old ids keep working.
 
 ### 5.1 Calling other macros
@@ -103,25 +103,25 @@ Some value-level shorthands exist already. They are **normalizations**, not macr
 
 | Short form | Normalized to |
 |------------|---------------|
-| Bare string | `{ default: string }` ([09](./09-localization.md)) |
-| Bare `options` array of `SelectOption` | `{ source: 'static', items }` ([12 §2](./12-option-sources-and-cascading.md#2-contract)) |
+| Bare string | `{ default: string }` ([10](./10-localization.md)) |
+| Bare `options` array of `SelectOption` | `{ source: 'static', items }` ([13 §2](./13-option-sources-and-cascading.md#2-contract)) |
 
-`conditions.required` is **not** a normalization: it stays a live `Conditions` facet in the core contract, and the compiler turns it into a `required` rule with `when` ([05 §6](./05-validation.md#6-required-and-conditions)).
+`conditions.required` is **not** a normalization: it stays a live `Conditions` facet in the core contract, and the compiler turns it into a `required` rule with `when` ([06 §6](./06-validation.md#6-required-and-conditions)).
 
-Normalizations are fixed and built in. Macros live in a registry and can be extended. Expressions have **no** short form ([04 §1](./04-expressions.md#1-shape)). Arrays of bare strings as options aren't a normalization either; a macro may accept them as its own argument format.
+Normalizations are fixed and built in. Macros live in a registry and can be extended. Expressions have **no** short form ([05 §1](./05-expressions.md#1-shape)). Arrays of bare strings as options aren't a normalization either; a macro may accept them as its own argument format.
 
 ## 7. Standard library (`@formgraph/macros`, optional)
 
 | Macro | Expands to | Long form |
 |-------|-----------|-----------|
-| `choice-with-other` | `choice` + text field visible/required when `other` is selected | [15 §3](./15-cookbook.md#3-other-option-with-free-text) |
-| `multi-choice-with-none` | `multi-choice` + exclusive-`none` effect | [15 §4](./15-cookbook.md#4-exclusive-none-option) |
-| `carry-forward` | `choice`/`multi-choice` with options filtered by another field's selection | [15 §5](./15-cookbook.md#5-carry-forward-options) |
-| `variable` | Hidden computed field (`visible: false`, `whenHidden: 'exclude'`) | [15 §2](./15-cookbook.md#2-form-level-variables) |
-| `yes-no` | `choice` with static `true` / `false` options and `ui.variant: 'radio'` | [15 §25](./15-cookbook.md#25-a-yesno-question-that-can-be-unanswered) |
-| `list` | `array` whose `item` is one scalar field | [15 §11](./15-cookbook.md#11-multiple-values-for-one-field) |
-| `reset-when` | Effects on the referenced fields that clear or reset this field | [15 §6](./15-cookbook.md#6-reset-a-field-when-another-changes) |
-| `hierarchy` | One `choice` per level with `map` sources keyed by the ancestor path (§7.1) | [12 §2.2](./12-option-sources-and-cascading.md#22-map) |
+| `choice-with-other` | `choice` + text field visible/required when `other` is selected | [16 §3](./16-cookbook.md#3-other-option-with-free-text) |
+| `multi-choice-with-none` | `multi-choice` + exclusive-`none` effect | [16 §4](./16-cookbook.md#4-exclusive-none-option) |
+| `carry-forward` | `choice`/`multi-choice` with options filtered by another field's selection | [16 §5](./16-cookbook.md#5-carry-forward-options) |
+| `variable` | Hidden computed field (`visible: false`, `whenHidden: 'exclude'`) | [16 §2](./16-cookbook.md#2-form-level-variables) |
+| `yes-no` | `choice` with static `true` / `false` options and `ui.variant: 'radio'` | [16 §25](./16-cookbook.md#25-a-yesno-question-that-can-be-unanswered) |
+| `list` | `array` whose `item` is one scalar field | [16 §11](./16-cookbook.md#11-multiple-values-for-one-field) |
+| `reset-when` | Effects on the referenced fields that clear or reset this field | [16 §6](./16-cookbook.md#6-reset-a-field-when-another-changes) |
+| `hierarchy` | One `choice` per level with `map` sources keyed by the ancestor path (§7.1) | [13 §2.2](./13-option-sources-and-cascading.md#22-map) |
 
 ### 7.1 `hierarchy`
 
@@ -162,13 +162,13 @@ Expands to:
 
 - **Data shape:** one plain value per level, as siblings named by `levels[].id`: `{ "country": "US", "state": "MO", "city": "springfield" }`. Wrap the macro in a group for nesting. No transformer is needed for loading or submission.
 - **Compound keys are lookup-only.** A level's `map` key joins all ancestor values, so values only need to be unique among siblings. Repeated names (`springfield`, `WA`) are fine. Duplicate sibling values are `E_MACRO_DUPLICATE_VALUE`.
-- **Multi-select levels:** if a level's generated field is a `multi-choice` (via `levels[].fieldType`), every deeper level is keyed by the plain `PathRef` of its **immediate** parent instead of the compound expression, because a compound key can't be built from several selected values ([12 §2.2.1](./12-option-sources-and-cascading.md#221-multi-select-parents)). So values in each of those levels must be unique across the whole level, not just among siblings (`E_MACRO_DUPLICATE_VALUE`). The macro also emits `groupBy: 'parent'` for the level right below a multi-select unless `levels[].groupBy` is `false`.
+- **Multi-select levels:** if a level's generated field is a `multi-choice` (via `levels[].fieldType`), every deeper level is keyed by the plain `PathRef` of its **immediate** parent instead of the compound expression, because a compound key can't be built from several selected values ([13 §2.2.1](./13-option-sources-and-cascading.md#221-multi-select-parents)). So values in each of those levels must be unique across the whole level, not just among siblings (`E_MACRO_DUPLICATE_VALUE`). The macro also emits `groupBy: 'parent'` for the level right below a multi-select unless `levels[].groupBy` is `false`.
 - **`keySeparator`** defaults to `/`. A value containing the separator is `E_MACRO_SEPARATOR`.
 - **`levels[]`** accepts any field keys (`label`, `ui`, `validations`, `conditions`, `autoSelectSingle`, …), copied onto the generated field. The top-level `cascade` applies to every level but the first; a level's own `cascade` overrides it.
 - **`levels.length`** must be at least the tree depth (`E_MACRO_TREE_DEPTH` otherwise). Leaves shallower than that are allowed: deeper levels get no options (`whenEmpty` applies).
 - **Size:** work and output are linear in the tree; the argument schema caps `tree` at 5,000 nodes and `levels` at 10 (§5.1). For large or frequently changing hierarchies, use a `provider` source with the same three fields instead.
 
-Includes (reusable sub-contracts) are **not** a macro, because they need I/O. They're put together before loading, by the CMS or publishing pipeline ([15 §12](./15-cookbook.md#12-reusable-sub-contracts)).
+Includes (reusable sub-contracts) are **not** a macro, because they need I/O. They're put together before loading, by the CMS or publishing pipeline ([16 §12](./16-cookbook.md#12-reusable-sub-contracts)).
 
 ## 8. Tooling
 

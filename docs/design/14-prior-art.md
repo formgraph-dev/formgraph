@@ -1,4 +1,4 @@
-# 13 · Prior Art
+# 14 · Prior Art
 
 [← Index](./README.md)
 
@@ -24,7 +24,7 @@ How the design compares to existing form libraries, and what we borrowed. Claims
 | Show/hide/enable conditions | ✅ ✔︎ (exactly 4 effects: `HIDE`, `SHOW`, `ENABLE`, `DISABLE`) | ✅ | ✅ | ✅ ✔︎ (`x-reactions`) | ❌ | ✅ |
 | Computed values | ❌ | ✅ ✔︎ (`calculateValue`) | ✅ (expressions) | ✅ | ❌ | ✅ |
 | Effects on other fields | ◐ ✔︎ (only through middleware, see §3) | ◐ | ◐ (triggers) | ✅ ✔︎ (`x-reactions` with `target`) | ❌ | ✅ (origin-aware) |
-| Cascading selects | ❌ | ✅ ✔︎ (`refreshOn`, `clearOnRefresh`) | ✅ ✔︎ (`choicesByUrl` with `{placeholder}` URLs) | ✅ (reactions) | ❌ | ✅ (doc 12) |
+| Cascading selects | ❌ | ✅ ✔︎ (`refreshOn`, `clearOnRefresh`) | ✅ ✔︎ (`choicesByUrl` with `{placeholder}` URLs) | ✅ (reactions) | ❌ | ✅ (doc 13) |
 | Writes tagged by origin (loading data can't trigger clears) | — | — | — | — | — | ✅ |
 | Async / server validation | ◐ ✔︎ (`additionalErrors` injection only) | ✅ | ◐ | ✅ | ✅ | ✅ |
 | Hidden-value policy | ❌ | ✅ ✔︎ `clearOnHide` (default `true`) | ✅ ✔︎ `clearInvisibleValues` (4 modes, default `onComplete`) | ◐ | ◐ `shouldUnregister` ✔︎ (default off) | ✅ hierarchical |
@@ -41,13 +41,13 @@ How the design compares to existing form libraries, and what we borrowed. Claims
 - **Rules ✔︎:** `rule: { effect: HIDE|SHOW|ENABLE|DISABLE, condition: { scope, schema } }`. The condition is a JSON Schema validated against the data at `scope`. An `undefined` scope **passes** unless `failWhenUndefined: true` is set. That's a surprising default worth knowing about.
 - **Validation ✔︎:** done by AJV. The modes are `ValidateAndShow` (default), `ValidateAndHide`, and `NoValidation`. Backend errors are injected with `additionalErrors`. In the core reducer, every `UPDATE_DATA` deep-clones the whole data object and re-validates the whole form, which is the root of its large-form performance issues.
 - **Testers ✔︎:** every renderer is registered with a tester `(uischema, schema) => number`, and the highest number wins (`rankWith`).
-- **Middleware ✔︎:** it **replaces the reducer** ("can apply arbitrary changes and therefore has full power over the JSON Forms state"). It receives the state, the action, and the default reducer. We borrowed the hook point but **deliberately narrowed** it ([02 §2.5](./02-state-model.md#25-commit-hooks)): ours can observe and veto, but can't rewrite changes, so the dependency graph stays the only path for value changes.
+- **Middleware ✔︎:** it **replaces the reducer** ("can apply arbitrary changes and therefore has full power over the JSON Forms state"). It receives the state, the action, and the default reducer. We borrowed the hook point but **deliberately narrowed** it ([03 §2.5](./03-state-model.md#25-commit-hooks)): ours can observe and veto, but can't rewrite changes, so the dependency graph stays the only path for value changes.
 - **i18n ✔︎:** `translate(key, defaultMessage, context)`. Keys default to the property path **without array indices** (`comments.message.label`) and can be overridden with an `i18n` option.
 - **Why we don't build on it:** its state is one `data` object behind a reducer, with no layers, origins, or row keys. We'd bypass its state model and keep only its renderers.
 
 ### Form.io
 - **Defaults ✔︎:** components default to `clearOnHide: true`. Selects have `refreshOn` (a field to watch) and `clearOnRefresh` (default `false`). This is the same shape as our `dependsOn` + `cascade.onChange`.
-- **Code evaluation ✔︎:** `@formio/core`'s `DefaultEvaluator` compiles custom logic with `new Function(...)`. Passing `noeval: true` disables evaluation (it logs a warning and returns a no-op), which also disables those custom-JS features. Our design has no eval to switch off ([04 §4](./04-expressions.md#4-security-model)).
+- **Code evaluation ✔︎:** `@formio/core`'s `DefaultEvaluator` compiles custom logic with `new Function(...)`. Passing `noeval: true` disables evaluation (it logs a warning and returns a no-op), which also disables those custom-JS features. Our design has no eval to switch off ([05 §4](./05-expressions.md#4-security-model)).
 - **Not checked:** how `clearOnRefresh` behaves when a form is first loaded with existing data.
 
 ### SurveyJS
@@ -60,7 +60,7 @@ How the design compares to existing form libraries, and what we borrowed. Claims
   | `onHidden` | `clear` |
   | `onHiddenContainer` | `clear` (our policies are already inherited from containers) |
 
-  Their default is effectively our `exclude`. Our default is `keep`, chosen to match general-purpose form libraries ([06 §4](./06-effects-and-computed.md#4-hidden-and-disabled-field-policy)).
+  Their default is effectively our `exclude`. Our default is `keep`, chosen to match general-purpose form libraries ([07 §4](./07-effects-and-computed.md#4-hidden-and-disabled-field-policy)).
 - **Cascading ✔︎:** `choicesByUrl.url` and `path` go through the text processor (`{question}` placeholders). If any placeholder has no value, the URL is set to empty and **no request is made**, which is the same as our `whenEmpty: 'disable'`. It's simple, but tied to HTTP URLs. Our request transformers generalize it.
 
 ### Formily
@@ -76,20 +76,20 @@ How the design compares to existing form libraries, and what we borrowed. Claims
 
 | Idea | From | Where |
 |------|------|-------|
-| Ranked tester renderer resolution | JSON Forms | [10 §4.1](./10-rendering-and-adapters.md#41-ranked-testers) |
-| JSON Schema export of the submitted data | JSON Forms (schema reuse) | [08 §6](./08-loading-and-submission.md#6-json-schema-export-of-the-submitted-data) |
+| Ranked tester renderer resolution | JSON Forms | [11 §4.1](./11-rendering-and-adapters.md#41-ranked-testers) |
+| JSON Schema export of the submitted data | JSON Forms (schema reuse) | [09 §6](./09-loading-and-submission.md#6-json-schema-export-of-the-submitted-data) |
 | JSON Schema import (`fromJsonSchema`) | JSON Forms | [01 §8](./01-schema-contract.md#8-json-schema-import) |
-| Commit middleware (narrowed to observe and veto) | JSON Forms middleware | [02 §2.5](./02-state-model.md#25-commit-hooks) |
-| Hidden-value policy semantics | SurveyJS, Form.io | [06 §4](./06-effects-and-computed.md#4-hidden-and-disabled-field-policy) |
-| Watch-field + clear-on-refresh cascade shape; "no request until deps are filled" | Form.io, SurveyJS | [12](./12-option-sources-and-cascading.md) |
-| Stable array row ids | React Hook Form | [03 §4](./03-paths-and-dependency-graph.md#4-array-row-identity) |
-| Standard Schema validators | TanStack Form | [05 §2.1](./05-validation.md#21-standard-schema-validators) |
-| Expression defaults (`defaultValueExpression`) | SurveyJS | [06 §3.1](./06-effects-and-computed.md#31-expression-defaults-replaces-mode-initial) |
-| Per-option disable (`choicesEnableIf`) | SurveyJS | [12 §2.1.1](./12-option-sources-and-cascading.md#211-disabling-options) |
-| Raw input vs. value (kept in the renderer, with `setInputError`) | Formily `inputValue`, SurveyJS `textUpdateMode` | [10 §2.1](./10-rendering-and-adapters.md#21-raw-input-stays-in-the-renderer) |
-| Three severities, strongest-wins display | SurveyJS `notificationType` (`error`/`warning`/`info`) ✔︎. Formily's `success` was not adopted | [05 §7](./05-validation.md#7-severity) |
-| Variables, "Other"/"None", carry-forward, `resetValueIf`, `multiple`, as macros | SurveyJS, Form.io | [14 §7](./14-macros.md#7-standard-library-formgraphmacros-optional) |
-| Autosave, draft rows, view mode, page modes, `persistent: false`, `canSubmitWhenInvalid`, `delayError`, row labels, tabs, as recipes | SurveyJS, Form.io, Formily, RHF, TanStack Form, JSON Forms | [15](./15-cookbook.md) |
+| Commit middleware (narrowed to observe and veto) | JSON Forms middleware | [03 §2.5](./03-state-model.md#25-commit-hooks) |
+| Hidden-value policy semantics | SurveyJS, Form.io | [07 §4](./07-effects-and-computed.md#4-hidden-and-disabled-field-policy) |
+| Watch-field + clear-on-refresh cascade shape; "no request until deps are filled" | Form.io, SurveyJS | [13](./13-option-sources-and-cascading.md) |
+| Stable array row ids | React Hook Form | [04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity) |
+| Standard Schema validators | TanStack Form | [06 §2.1](./06-validation.md#21-standard-schema-validators) |
+| Expression defaults (`defaultValueExpression`) | SurveyJS | [07 §3.1](./07-effects-and-computed.md#31-expression-defaults-replaces-mode-initial) |
+| Per-option disable (`choicesEnableIf`) | SurveyJS | [13 §2.1.1](./13-option-sources-and-cascading.md#211-disabling-options) |
+| Raw input vs. value (kept in the renderer, with `setInputError`) | Formily `inputValue`, SurveyJS `textUpdateMode` | [11 §2.1](./11-rendering-and-adapters.md#21-raw-input-stays-in-the-renderer) |
+| Three severities, strongest-wins display | SurveyJS `notificationType` (`error`/`warning`/`info`) ✔︎. Formily's `success` was not adopted | [06 §7](./06-validation.md#7-severity) |
+| Variables, "Other"/"None", carry-forward, `resetValueIf`, `multiple`, as macros | SurveyJS, Form.io | [15 §7](./15-macros.md#7-standard-library-formgraphmacros-optional) |
+| Autosave, draft rows, view mode, page modes, `persistent: false`, `canSubmitWhenInvalid`, `delayError`, row labels, tabs, as recipes | SurveyJS, Form.io, Formily, RHF, TanStack Form, JSON Forms | [16](./16-cookbook.md) |
 
 ## 5. Where we deliberately differ
 

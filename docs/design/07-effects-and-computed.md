@@ -1,4 +1,4 @@
-# 06 · Effects & Computed Values
+# 07 · Effects & Computed Values
 
 [← Index](./README.md) · Addresses review items B1, B2, B6
 
@@ -21,23 +21,23 @@ Every write is tagged with an **origin**: a label saying where it came from. Cal
 | `host` | `engine.setValue`, `engine.array(...)`, and other direct calls from host code |
 | `effect` | Effects, cascade invalidation, `autoSelectSingle`, reverse fill, `whenHidden: 'clear'` |
 | `computed` | Computed values |
-| `load` | Loading and reloading ([08 §2](./08-loading-and-submission.md#2-data-load-pipeline), [§3](./08-loading-and-submission.md#3-reload-policy)) |
-| `external` | `engine.applyExternal` ([08 §7](./08-loading-and-submission.md#7-external-updates-and-conflicts)) |
+| `load` | Loading and reloading ([09 §2](./09-loading-and-submission.md#2-data-load-pipeline), [§3](./09-loading-and-submission.md#3-reload-policy)) |
+| `external` | `engine.applyExternal` ([09 §7](./09-loading-and-submission.md#7-external-updates-and-conflicts)) |
 | `reset` | `engine.reset()` |
 | `default` | Defaults, including expression defaults |
 | `history` | Undo/redo |
-| `restore` | `engine.restore(snapshot)` ([08 §8](./08-loading-and-submission.md#8-snapshots-drafts)) |
+| `restore` | `engine.restore(snapshot)` ([09 §8](./09-loading-and-submission.md#8-snapshots-drafts)) |
 | `x-…` | A host-registered custom origin (§2.1) |
 
 ### 2.1 Origin policy
 
-What an origin **does** is defined in one table. Effects, cascades, plugins, and the store read this table and never test origin names directly. The core table below holds core origins; plugins register their own rows at install (`history` → `history`, `drafts` → `restore`, [02 §8.1](./02-state-model.md#81-plugin-api)):
+What an origin **does** is defined in one table. Effects, cascades, plugins, and the store read this table and never test origin names directly. The core table below holds core origins; plugins register their own rows at install (`history` → `history`, `drafts` → `restore`, [03 §8.1](./03-state-model.md#81-plugin-api)):
 
 ```ts
 interface OriginPolicy {
   layer: 'current' | 'loaded' | 'default' | null;    // which value layer is written (null: not stored)
   effects: boolean;                                   // run effects on the written paths
-  invalidate: boolean;                                // apply cascade onChange to dependents (12 §4)
+  invalidate: boolean;                                // apply cascade onChange to dependents (13 §4)
   history: 'record' | 'merge' | 'skip' | 'clear' | 'clear-overlap';   // flag for the history plugin; core ignores it
 }
 
@@ -47,7 +47,7 @@ export const ORIGIN_POLICY = {
   effect:   { layer: 'current',  effects: true,  invalidate: true,  history: 'merge'  },
   computed: { layer: null,       effects: false, invalidate: true,  history: 'skip'   },
   load:     { layer: 'loaded',   effects: false, invalidate: false, history: 'clear'  },
-  resume:   { layer: null,       effects: false, invalidate: false, history: 'clear'  },   // installs all layers (08 §9)
+  resume:   { layer: null,       effects: false, invalidate: false, history: 'clear'  },   // installs all layers (09 §9)
   external: { layer: 'loaded',   effects: false, invalidate: false, history: 'clear-overlap' },
   reset:    { layer: 'current',  effects: false, invalidate: false, history: 'clear'  },
   default:  { layer: 'default',  effects: false, invalidate: false, history: 'skip'   },
@@ -58,7 +58,7 @@ origins.register('history', { layer: 'current', effects: false, invalidate: fals
 origins.register('restore', { layer: 'current', effects: false, invalidate: false, history: 'clear' });   // drafts plugin
 ```
 
-`history` values ([02 §6.2](./02-state-model.md#62-undo--redo-opt-in)):
+`history` values ([03 §6.2](./03-state-model.md#62-undo--redo-opt-in)):
 
 | Value | Meaning |
 |-------|---------|
@@ -66,13 +66,13 @@ origins.register('restore', { layer: 'current', effects: false, invalidate: fals
 | `merge` | Joins the step of the tick's root write. If the root wasn't recorded (`skip`), neither is this write; if the root cleared history, nothing is recorded |
 | `skip` | Not recorded; history is left as is |
 | `clear` | Clears both stacks (the baseline changed) |
-| `clear-overlap` | Clears both stacks only if a written path appears in a recorded step ([08 §7.3](./08-loading-and-submission.md#73-interaction-with-undo)) |
+| `clear-overlap` | Clears both stacks only if a written path appears in a recorded step ([09 §7.3](./09-loading-and-submission.md#73-interaction-with-undo)) |
 
 Notes:
 - `computed` invalidates because a computed parent that changes really did change (it's derived from edited values). `load` and `external` don't: loaded children are trusted.
-- `resume` writes no single layer: it installs `default`, `loaded`, `current`, rows and meta as exported, with no inbound mapping, effects or conflict detection; dirty bits and counts are rebuilt from the layers ([08 §9](./08-loading-and-submission.md#9-server-rendering)).
-- `reset({ keepLoaded: false })` also empties `loaded` in the same tick. This is the one write to `loaded` outside `layer`; it's part of the reset's definition ([02 §7](./02-state-model.md#7-engine-write-api-core)).
-- Origins never set `touched`. Only `handlers.onBlur()` ([10 §2](./10-rendering-and-adapters.md#2-headless-field-api)) and `engine.touch()` do, so values written by host code don't reveal validation messages before the person has interacted with the field.
+- `resume` writes no single layer: it installs `default`, `loaded`, `current`, rows and meta as exported, with no inbound mapping, effects or conflict detection; dirty bits and counts are rebuilt from the layers ([09 §9](./09-loading-and-submission.md#9-server-rendering)).
+- `reset({ keepLoaded: false })` also empties `loaded` in the same tick. This is the one write to `loaded` outside `layer`; it's part of the reset's definition ([03 §7](./03-state-model.md#7-engine-write-api-core)).
+- Origins never set `touched`. Only `handlers.onBlur()` ([11 §2](./11-rendering-and-adapters.md#2-headless-field-api)) and `engine.touch()` do, so values written by host code don't reveal validation messages before the person has interacted with the field.
 - **The only per-call override** is `engine.setValue(p, v, { runEffects: false })` (and the same option on array commands), for bulk host writes. It turns off `effects` for that write only, and its commit entries record it.
 
 **Custom origins.** A host can register its own origin, for example for a sync engine or an import, so observers can tell those writes apart. It must use the `x-` prefix and extend a built-in origin's policy (`extends`, any built-in except `user` and `resume`, so host code can't pass its writes off as user input), optionally overriding fields:
@@ -101,7 +101,7 @@ interface Effect extends Extensible {
 Rules:
 1. Effects run only for writes whose origin policy has `effects: true` (§2.1), including cascades. Cascade depth is limited by `limits.effectDepth` in the engine options (default 8). Going deeper is `E_EFFECT_DEPTH`: the remaining effects are dropped, and the diagnostic lists the chain of `(source → target)` effects that led there.
 2. Host code can turn them off per call with `{ runEffects: false }`.
-3. So effects **never** run for origins with `effects: false`, such as loading or undo/redo ([02 §6.2](./02-state-model.md#62-undo--redo-opt-in)). This prevents a classic bug (present in the v4 draft) where a clear effect wipes loaded data during load.
+3. So effects **never** run for origins with `effects: false`, such as loading or undo/redo ([03 §6.2](./03-state-model.md#62-undo--redo-opt-in)). This prevents a classic bug (present in the v4 draft) where a clear effect wipes loaded data during load.
 4. Effects only fire when the value actually changes (`!deepEqual(prev, next)`).
 
 Action semantics:
@@ -109,7 +109,7 @@ Action semantics:
 - `set`: write the evaluated `value` into `current`.
 - `reset`: write the **default** value into `current`, ignoring loaded.
 - `revert`: delete the key from `current`, falling back to loaded, then default.
-- Arrays are atomic ([02 §3.1](./02-state-model.md#31-resolution-granularity)): `reset` or `revert` on a path inside an array (`items[2].qty`) acts on the **whole array**. `clear` and `set` write the leaf with an atomic array write ([02 §3.2](./02-state-model.md#32-atomic-array-writes)).
+- Arrays are atomic ([03 §3.1](./03-state-model.md#31-resolution-granularity)): `reset` or `revert` on a path inside an array (`items[2].qty`) acts on the **whole array**. `clear` and `set` write the leaf with an atomic array write ([03 §3.2](./03-state-model.md#32-atomic-array-writes)).
 - `validate`: schedule validation of the target (respecting "already validated once").
 - `x-*`: a host-registered effect handler. It receives the engine write API with origin `effect`:
 
@@ -128,7 +128,7 @@ interface ComputedConfig extends Extensible {
 ```
 
 - Not overridable: the value is **not stored** in any layer. It is evaluated into `values` during resolve, and the field renders read-only. This is the simplest model and needs no sync.
-- Overridable: the computed result acts as a **virtual layer between `loaded` and `current`** ([02 §3](./02-state-model.md#3-precedence-by-presence-not-nullishness)), and is the field's dirty baseline ([02 §4](./02-state-model.md#4-dirty-semantics)). A user write goes into `current` and wins. `revert` brings back the computed value. The view exposes `isOverridden(path)`.
+- Overridable: the computed result acts as a **virtual layer between `loaded` and `current`** ([03 §3](./03-state-model.md#3-precedence-by-presence-not-nullishness)), and is the field's dirty baseline ([03 §4](./03-state-model.md#4-dirty-semantics)). A user write goes into `current` and wins. `revert` brings back the computed value. The view exposes `isOverridden(path)`.
 
 Computed values take part in the DAG and in cycle detection.
 
@@ -143,8 +143,8 @@ The earlier `initial` mode wrote a pre-filled value into `current`, which made a
   "defaultValue": { "lang": "json-logic", "expr": { "var": "../billingName" } } }
 ```
 
-- The result is written to the **`default` layer** (origin `default`, so no effects run). The field isn't dirty, because dirty compares against the layers below `current` ([02 §4](./02-state-model.md#4-dirty-semantics)).
-- It is re-evaluated whenever its dependencies change. Because of presence precedence ([02 §3](./02-state-model.md#3-precedence-by-presence-not-nullishness)), that only shows when neither `current` nor `loaded` has the path. So it's a **live default until the user edits or saved data exists**, with no extra bookkeeping.
+- The result is written to the **`default` layer** (origin `default`, so no effects run). The field isn't dirty, because dirty compares against the layers below `current` ([03 §4](./03-state-model.md#4-dirty-semantics)).
+- It is re-evaluated whenever its dependencies change. Because of presence precedence ([03 §3](./03-state-model.md#3-precedence-by-presence-not-nullishness)), that only shows when neither `current` nor `loaded` has the path. So it's a **live default until the user edits or saved data exists**, with no extra bookkeeping.
 - `reset` effects and `engine.reset()` fall back to the current evaluated default.
 
 | Want | Use |
@@ -155,7 +155,7 @@ The earlier `initial` mode wrote a pre-filled value into `current`, which made a
 
 ### 3.2 Aggregates
 
-Totals are ordinary expressions with the built-in `sum`, `count`, `min`, `max` operators ([04 §2](./04-expressions.md#2-evaluator-registry)):
+Totals are ordinary expressions with the built-in `sum`, `count`, `min`, `max` operators ([05 §2](./05-expressions.md#2-evaluator-registry)):
 
 ```json
 { "kind": "field", "id": "totalQty", "fieldType": "number",
@@ -163,7 +163,7 @@ Totals are ordinary expressions with the built-in `sum`, `count`, `min`, `max` o
 ```
 
 - Cost is O(rows) per evaluation, the same as a full recompute; any `[*]` expression re-reads every row when one changes.
-- There's no incremental (delta) aggregate in core. It may return as a plugin if the M1 benchmark demands it ([11](./11-open-questions-and-roadmap.md)).
+- There's no incremental (delta) aggregate in core. It may return as a plugin if the M1 benchmark demands it ([12](./12-open-questions-and-roadmap.md)).
 
 ## 4. Hidden and disabled field policy
 

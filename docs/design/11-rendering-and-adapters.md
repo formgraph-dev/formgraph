@@ -1,4 +1,4 @@
-# 10 · Rendering & Adapters
+# 11 · Rendering & Adapters
 
 [← Index](./README.md) · Addresses review items I1, I2
 
@@ -20,38 +20,38 @@ The core exposes a framework-neutral controller per node instance (per row key p
 interface FieldState<V = Json> {        // one immutable object; a new reference only when a member changes
   value: V; visible: boolean; disabled: boolean; readOnly: boolean; required: boolean;
   feedback: Notice[]; severity: Severity | null; showFeedback: boolean;
-  errors: Notice[]; notices: Notice[];                            // 05 §7.4
+  errors: Notice[]; notices: Notice[];                            // 06 §7.4
   validated: boolean; valid: boolean;
   touched: boolean; dirty: boolean; validating: boolean;
   label: string; description?: string; placeholder?: string;
-  conflict: Conflict | null;                                             // 08 §7
+  conflict: Conflict | null;                                             // 09 §7
   testId: string;                            // e2e selector, index-based; changes when the row moves (§8.1); '' when testIds: false
 }
 
 interface FieldController<V = Json> {
   path: Readable<DataPath>;                  // index-based; changes when an ancestor row moves. key: stable across moves
   key: RowKeyPath; compiled: CompiledNode;   // compiled.node is the contract node (01 §7.3)
-  state: Readable<FieldState<V>>;            // primary: adapters subscribe once per field (02 §2.2)
+  state: Readable<FieldState<V>>;            // primary: adapters subscribe once per field (03 §2.2)
   select<T>(pick: keyof FieldState<V> | ((s: FieldState<V>) => T), eq?: (a: T, b: T) => boolean): Readable<T>;   // memoized: get() keeps its result while input unchanged or eq holds (default Object.is)
   ids: FieldIds;                             // §8
   // fine-grained handles, derived from `state` (select(s => s.value), …), for non-UI code
   value: Readable<V>; visible: Readable<boolean>; feedback: Readable<Notice[]>; dirty: Readable<boolean>;   // … one per FieldState member
-  options?: Readable<OptionsState>;          // separate: changes on its own schedule (12 §9)
+  options?: Readable<OptionsState>;          // separate: changes on its own schedule (13 §9)
   assets?: AssetController;                  // asset / multi-asset fields only; added by the assets plugin
   // commands
   setValue(v: V): void;  revert(): void;
-  handlers: { onFocus(): void; onBlur(): void };   // renderers report interaction: visited / touched + blur validation (05 §3)
+  handlers: { onFocus(): void; onBlur(): void };   // renderers report interaction: visited / touched + blur validation (06 §3)
   focus(): Promise<boolean>;                   // DOM focus only (§8); no meta change
   setInputError(message: Text | null): void;   // see below
   report(reporter: string, messages: ComponentNotice[] | null): void;   // §2.2
   onValidate(reporter: string, fn: ComponentValidate): () => void;      // §2.2; returns unregister
   setBusy(token: string, busy: boolean): void;                          // §2.2
   registerElement(el: unknown): () => void;    // focus target (§8); returns unregister
-  resolveConflict(choice: 'local' | 'external'): void;   // 08 §7
-  // option commands (loadMore, search, retry) live on OptionsState (12 §9)
+  resolveConflict(choice: 'local' | 'external'): void;   // 09 §7
+  // option commands (loadMore, search, retry) live on OptionsState (13 §9)
 }
 
-interface ArrayController extends FieldController<Json[]>, ArrayHandle {   // ArrayHandle: 02 §7, same as engine.array(path)
+interface ArrayController extends FieldController<Json[]>, ArrayHandle {   // ArrayHandle: 03 §7, same as engine.array(path)
   canAdd: Readable<boolean>; canRemove: Readable<boolean>;
   row(key: RowKey): ScopeController;
 }
@@ -60,9 +60,9 @@ interface ScopeController {          // one array row, or a dataScope group
   path: Readable<DataPath>; key: RowKeyPath;   // path changes when the row (or an ancestor row) moves
   field(relPath: PathRef): FieldController;     // './city'
   value: Readable<Json>; visible: Readable<boolean>;
-  dirty: Readable<boolean>;                     // rows: derived on subscribe, O(row) (02 §4); groups: O(1) count
+  dirty: Readable<boolean>;                     // rows: derived on subscribe, O(row) (03 §4); groups: O(1) count
   testId: Readable<string>;                     // row / group container selector (§8.1)
-  feedback: Readable<Notice[]>; severity: Readable<Severity | null>; showFeedback: Readable<boolean>;   // container-level messages, 05 §7.4
+  feedback: Readable<Notice[]>; severity: Readable<Severity | null>; showFeedback: Readable<boolean>;   // container-level messages, 06 §7.4
   registerElement(el: unknown): () => void;    // container focus target (§8)
   focus(): Promise<boolean>;
 }
@@ -70,11 +70,11 @@ interface ScopeController {          // one array row, or a dataScope group
 interface ContentController {                 // `content` nodes (01 §3.6): display only, no value, state or handlers
   key: RowKeyPath; compiled: CompiledNode;     // the node's position: enclosing row key path + id
   visible: Readable<boolean>;
-  label: Readable<string | undefined>; description: Readable<string | undefined>;   // resolved text (09)
+  label: Readable<string | undefined>; description: Readable<string | undefined>;   // resolved text (10)
   testId: Readable<string>;                    // `prefix:addresses.2.billingIntro` (§8.1)
 }
 
-interface AssetController {          // assets plugin, 07 §2.1
+interface AssetController {          // assets plugin, 08 §2.1
   items: Readable<Array<AssetRef & { id: string }>>;   // status / progress / error per file; `id` is engine-local (kept in meta, not in values)
   add(file: Blob | PlatformFile): void;   // queues as 'pending'; enforces accept / maxBytes / maxFiles
   retry(id: string): void;           // 'error' → 'pending'
@@ -82,14 +82,14 @@ interface AssetController {          // assets plugin, 07 §2.1
 }
 ```
 
-Full signatures: [17](./17-api-reference.md). Controllers are created lazily and cached by row key path, then disposed when the row or node is removed. `state` is assembled lazily: a member's facet is computed only while `state` has subscribers, and a write notifies a field's `state` once per tick however many of its members changed.
+Full signatures: [18](./18-api-reference.md). Controllers are created lazily and cached by row key path, then disposed when the row or node is removed. `state` is assembled lazily: a member's facet is computed only while `state` has subscribers, and a write notifies a field's `state` once per tick however many of its members changed.
 
 ### 2.1 Raw input stays in the renderer
 
 The core stores **parsed values only**. What the user is typing (`"12."`, `"1,5"`, a half-entered date) lives in the renderer's local state. The renderer calls `setValue` when the input parses (or on blur, if it prefers to commit on blur).
 
 When the input can't be parsed, the renderer calls `setInputError(message)`. This:
-- stores a message with `source: 'input'` and severity `error` for the field ([05 §5](./05-validation.md#5-notice-shape)), shown through `feedback` / `showFeedback` like any other error,
+- stores a message with `source: 'input'` and severity `error` for the field ([06 §5](./06-validation.md#5-notice-shape)), shown through `feedback` / `showFeedback` like any other error,
 - **blocks submit** until cleared,
 - leaves the last valid value in place.
 
@@ -100,7 +100,7 @@ When the input can't be parsed, the renderer calls `setInputError(message)`. Thi
 A renderer that wraps its own subsystem (a third-party grid, a map, a signature pad, an OCR widget) often has its own validation and its own async work. It feeds both into the engine through the controller, so they behave like the engine's own:
 
 ```ts
-type ComponentNotice = Omit<NoticeInput, 'path'>;   // NoticeInput: 05 §4; severity default 'error'
+type ComponentNotice = Omit<NoticeInput, 'path'>;   // NoticeInput: 06 §4; severity default 'error'
 
 controller.report('x-grid', [
   { message: 'Quantity must be positive', subPath: '/rows/3/qty' },
@@ -112,8 +112,8 @@ controller.setBusy('x-grid:recalc', false);
 ```
 
 **`report(reporter, messages)`**
-- Stores the messages as `Notice`s with `source: 'component'` and `rule: reporter` ([05 §5](./05-validation.md#5-notice-shape)). Each call **replaces** that reporter's earlier messages. Other reporters and engine sources are untouched, so one field can carry several reporters.
-- Messages count like any other message: `feedback` and `severity` (strongest wins), `showFeedback` timing, `valid`, `firstInvalid`, and submit/`next()` blocking per severity ([05 §7](./05-validation.md#7-severity)).
+- Stores the messages as `Notice`s with `source: 'component'` and `rule: reporter` ([06 §5](./06-validation.md#5-notice-shape)). Each call **replaces** that reporter's earlier messages. Other reporters and engine sources are untouched, so one field can carry several reporters.
+- Messages count like any other message: `feedback` and `severity` (strongest wins), `showFeedback` timing, `valid`, `firstInvalid`, and submit/`next()` blocking per severity ([06 §7](./06-validation.md#7-severity)).
 - The engine doesn't clear them on `setValue`: the component knows when its findings are stale. They are cleared when the controller is disposed (the node or row is removed), and on `reset`/`restore`. Like other messages, they're suppressed while the field is hidden or disabled unless `validateHidden`/`validateDisabled` is set.
 - They are transient: they aren't in drafts, `exportState`, or history. After a resume or restore, the component reports again on mount.
 - `reporter` is a free string. `'input'` is reserved for `setInputError`, which is shorthand for a single `error` message with `source: 'input'`.
@@ -140,7 +140,7 @@ What the component **can't** do: create paths or controllers inside its value, t
 
 ## 3. Framework bindings
 
-Each adapter binds `Readable<T>` to its framework's reactivity. That binding is the only framework-specific reactive code. Adapters also install a read observer ([02 §2.6](./02-state-model.md#26-tracking-reads-for-framework-adapters)) so that `get()` calls inside the framework's own computed values and effects are tracked natively.
+Each adapter binds `Readable<T>` to its framework's reactivity. That binding is the only framework-specific reactive code. Adapters also install a read observer ([03 §2.6](./03-state-model.md#26-tracking-reads-for-framework-adapters)) so that `get()` calls inside the framework's own computed values and effects are tracked natively.
 
 | Framework | Binding |
 |-----------|---------|
@@ -178,7 +178,7 @@ function useForm<T = FormState>(select?: keyof FormState | ((s: FormState) => T)
 const phase = useForm('phase');                              // engine.form.select('phase'); re-renders only on phase change
 const canSubmit = useForm(s => s.valid && !s.validating);
 
-// any tracked computation, one subscription for the component (02 §2.6)
+// any tracked computation, one subscription for the component (03 §2.6)
 function useTracked<T>(fn: () => NotAsync<T>, eq?: (a: T, b: T) => boolean): T;   // runs fn in observeReads, subscribes to what it read, useSyncExternalStore on the result
 const canShip = useTracked(() =>
   engine.field('country').value.get() !== '' && engine.form.select('counts').get().error === 0);
@@ -188,7 +188,7 @@ const canShip = useTracked(() =>
 
 - Inline selectors are allowed: the adapter keeps the latest `select` / `eq` in a ref, so a new function each render does not resubscribe. Other adapters do the same with their equivalent.
 - `select` memoizes: the derived `get()` returns the **same result object** while the input `FieldState` is unchanged, or while `eq(prev, next)` holds (default `Object.is`). `useSyncExternalStore` requires this. Selectors returning new objects need `eq` (for example `shallowEqual`).
-- **Server rendering:** `get` doubles as `getServerSnapshot`, since the engine state is the same on server and client after `resume` ([08 §9](./08-loading-and-submission.md#9-server-rendering)). Every adapter must provide the equivalent (Vue `onServerPrefetch`, Solid/Svelte SSR reads `get()` once and doesn't subscribe).
+- **Server rendering:** `get` doubles as `getServerSnapshot`, since the engine state is the same on server and client after `resume` ([09 §9](./09-loading-and-submission.md#9-server-rendering)). Every adapter must provide the equivalent (Vue `onServerPrefetch`, Solid/Svelte SSR reads `get()` once and doesn't subscribe).
 - `<FormProvider engine>`, `<ScopeProvider path>` (rows and data-scoped groups), and `<FormRenderer renderers />`.
 - `get()` returns a reference that stays the same until the value changes, which `useSyncExternalStore` requires.
 - Svelte note: the store contract requires `subscribe` to call the listener immediately with the current value. `Readable.subscribe` doesn't, so the Svelte adapter wraps it. Hosts can also use `@tanstack/*-store` hooks if they want, but our adapters don't depend on them.
@@ -238,7 +238,7 @@ defineRenderers({ field: { choice: Select } });   // type error if Select expect
 
 ### 4.1 Ranked testers
 
-Borrowed from JSON Forms ([13](./13-prior-art.md)). Any renderer can be registered with a tester that scores how well it fits a node:
+Borrowed from JSON Forms ([14](./14-prior-art.md)). Any renderer can be registered with a tester that scores how well it fits a node:
 
 ```ts
 type Tester = (node: CompiledNode, ctx: { platform: string; parent?: CompiledNode }) => number; // -1 = no match
@@ -260,7 +260,7 @@ A field type can be registered in the engine with no renderer on this client (fo
 - **Diagnostic.** When lookup reaches `fallback` for a field, the adapter reports `W_NO_RENDERER` through `onDiagnostic`, once per field type, with `detail: { fieldType, paths }`.
 - **Built-in fallback.** For any kind the host's `fallback` doesn't cover (§4), adapters use their own. Which one depends on `platform.dev` (§6):
   - **Dev (fields):** a clearly marked box (dashed border, warning colour) with the field type, the path, the value as truncated JSON (about 200 characters), and a fix hint ("add a renderer, or a contract `fallback`, 01 §3.5"). Raw JSON is fine here; only developers see it.
-  - **Prod (fields):** looks like a normal read-only field. Label and description as usual; the value as text (strings, numbers and booleans formatted normally, choice values by their option label); anything else, or an empty value, shows the built-in text `{ key: 'formgraph.unsupported', default: 'Not available on this device' }`, which the host's resolver can translate or reword ([09 §2](./09-localization.md#2-resolution)). Never raw JSON or the type name.
+  - **Prod (fields):** looks like a normal read-only field. Label and description as usual; the value as text (strings, numbers and booleans formatted normally, choice values by their option label); anything else, or an empty value, shows the built-in text `{ key: 'formgraph.unsupported', default: 'Not available on this device' }`, which the host's resolver can translate or reword ([10 §2](./10-localization.md#2-resolution)). Never raw JSON or the type name.
   - **Groups, arrays, dynamic groups (both modes):** render the children, with no wrapper.
   - **Content (both modes):** `label` then `description` as plain text, with no styling beyond what the platform gives text. The text is static, so there is nothing to hide in production.
 
@@ -275,19 +275,19 @@ A field type can be registered in the engine with no renderer on this client (fo
 
 ## 5. Wizards
 
-Provided by the `wizard` plugin ([02 §8](./02-state-model.md#8-plugins)), which the default entry installs: `engine.wizard()` returns the `WizardController`. Fields in inactive steps compile lazily ([02 §6.3](./02-state-model.md#63-lazy-compile)).
+Provided by the `wizard` plugin ([03 §8](./03-state-model.md#8-plugins)), which the default entry installs: `engine.wizard()` returns the `WizardController`. Fields in inactive steps compile lazily ([03 §6.3](./03-state-model.md#63-lazy-compile)).
 
-Steps are `group` nodes with `step: true`. Their presentation (tabs, cards, etc.) is still free via `ui.variant`. A core `WizardController` (built on top of the engine) provides `steps`, `current`, `canNext` (validates only the current step's subtree; errors always block, warnings follow their gate's policy, see [05 §7.3](./05-validation.md#73-gates-submit-policy-for-warnings)), `next({ confirm? })`, `prev`, and `goTo`. Steps can be conditionally visible, and hidden steps are skipped.
+Steps are `group` nodes with `step: true`. Their presentation (tabs, cards, etc.) is still free via `ui.variant`. A core `WizardController` (built on top of the engine) provides `steps`, `current`, `canNext` (validates only the current step's subtree; errors always block, warnings follow their gate's policy, see [06 §7.3](./06-validation.md#73-gates-submit-policy-for-warnings)), `next({ confirm? })`, `prev`, and `goTo`. Steps can be conditionally visible, and hidden steps are skipped.
 
 ```ts
 next(opts?: { confirm?: string[] }): Promise<{
   ok: boolean;
   reason?: 'errors' | 'gated' | 'validating' | 'assets-pending' | 'last-step';
-  gates?: GateStop[];                       // 08 §4
+  gates?: GateStop[];                       // 09 §4
 }>;
 ```
 
-`next()` validates the current step with every applicable rule ([05 §3](./05-validation.md#3-triggers)), **awaits** its async validation and pending assets (per `submission.awaitAsync`, [07 §2.1](./07-async-data-and-registries.md#21-asset-stores)), and only then moves. On `ok: false` it stays on the step and marks its fields touched so messages show. `canNext` is the synchronous, `Readable<boolean>` estimate for enabling the button.
+`next()` validates the current step with every applicable rule ([06 §3](./06-validation.md#3-triggers)), **awaits** its async validation and pending assets (per `submission.awaitAsync`, [08 §2.1](./08-async-data-and-registries.md#21-asset-stores)), and only then moves. On `ok: false` it stays on the step and marks its fields touched so messages show. `canNext` is the synchronous, `Readable<boolean>` estimate for enabling the button.
 
 ```ts
 if ((await wiz.next()).ok) await drafts.put(key, engine.snapshot());
@@ -299,7 +299,7 @@ The core is platform-agnostic (D24); everything platform-specific lives in adapt
 
 **What the core may use.** ES2020 plus `Promise`, `Map`/`WeakMap`, `AbortController`/`AbortSignal` (constructor, `abort()`, `aborted`, `addEventListener` only; no `AbortSignal.any`/`timeout`), and `RegExp` with the `u` flag. It never touches `window`, `document`, DOM types, `requestAnimationFrame`, `structuredClone`, `TextEncoder`, `crypto`, `Blob`/`File` at runtime, Node built-ins, or `Intl`:
 - `contractBytes` counts UTF-8 bytes with a small loop; hashes (`contractHash`, cache keys, sub-schema hashes) are a bundled pure-JS hash.
-- Asset inputs (`Blob | PlatformFile`, [07 §2.1](./07-async-data-and-registries.md#21-asset-stores)) are passed through to the host's store untouched.
+- Asset inputs (`Blob | PlatformFile`, [08 §2.1](./08-async-data-and-registries.md#21-asset-stores)) are passed through to the host's store untouched.
 - The `icu` plugin needs `Intl.PluralRules`/`NumberFormat` and checks for them at install and throws a plain error naming the missing API; Hermes ships them. Core `{name}` formatting needs nothing.
 
 **Platform hooks.** Timing is injected, defaulting to `globalThis`:
@@ -310,7 +310,7 @@ interface Platform {
   setTimeout(fn: () => void, ms: number): unknown;      // debounce, ttl, async validation delays
   clearTimeout(handle: unknown): void;
   nextFrame(fn: () => void): void;                      // focus wait (§8); default requestAnimationFrame if present, else setTimeout(fn, 0)
-  dev: boolean;                                         // dev-only behaviour: onDiagnostic default (16 §1), built-in fallbacks (§4.2)
+  dev: boolean;                                         // dev-only behaviour: onDiagnostic default (17 §1), built-in fallbacks (§4.2)
 }
 createFormEngine({ …, platform: { nextFrame: (fn) => InteractionManager.runAfterInteractions(fn) } });
 ```
@@ -334,7 +334,7 @@ Fully native hosts (Swift/Kotlin) are out of scope for 1.0; the contract and sem
 
 ## 7. Devtools
 
-`@formgraph/devtools` subscribes to the engine and shows the layers per path (which one won), the DAG with the last tick's evaluated nodes highlighted, recent commits with origins (its own capped buffer, filled through `onCommit`, [02 §2.5](./02-state-model.md#25-commit-hooks)), and async request timelines.
+`@formgraph/devtools` subscribes to the engine and shows the layers per path (which one won), the DAG with the last tick's evaluated nodes highlighted, recent commits with origins (its own capped buffer, filled through `onCommit`, [03 §2.5](./03-state-model.md#25-commit-hooks)), and async request timelines.
 
 ## 8. Accessibility
 
@@ -347,11 +347,11 @@ createFormEngine({ …, idPrefix: 'checkout' });   // optional; see below
 - **Collision-free encoding.** Each row-key-path segment is escaped: `[A-Za-z0-9]` pass through, `_` becomes `__`, and every other character becomes `_` + its UTF-8 bytes as two-digit lowercase hex (`-` → `_2d`, `/` → `_2f`). Segments are joined with `-`, and row-key segments are written `_r<escaped key>` (`_r` is never produced by escaping, since `r` isn't hex), so a name segment can never look like a row key. `/a-b` → `a_2db`, `/a/b` → `a-b`: distinct.
 - **Default prefix.** Without `idPrefix`, the adapter supplies the framework's unique id per `<FormProvider>` (React `useId`, Vue `useId`, Solid `createUniqueId`, Svelte `$props.id()`). These are SSR-stable, so server and client ids still match; two forms on one page never collide.
 
-- `controller.ids` is derived from the row key path, so ids are stable across reorders and identical on server and client (row keys come with `resume`, [08 §9](./08-loading-and-submission.md#9-server-rendering)). Web renderers wire `id`, `htmlFor`, `aria-describedby` (description + feedback when `showFeedback`), `aria-invalid` (`severity === 'error'`) and `aria-required`; React Native renderers map them to `nativeID`, `accessibilityLabelledBy` and `accessibilityState` (§6).
-- `engine.firstInvalid(opts?: { include?: Array<'errors' | 'external' | 'conflicts'> }): DataPath | null` (default: all three). Returns the first failing node (field, group or array) in form order: an `error`-severity message (including `source: 'input'`), an external error, or an unresolved conflict, filtered by `include`. Hidden nodes are skipped unless they are validated (`validateHidden`, [06 §4](./06-effects-and-computed.md#4-hidden-and-disabled-field-policy)).
+- `controller.ids` is derived from the row key path, so ids are stable across reorders and identical on server and client (row keys come with `resume`, [09 §9](./09-loading-and-submission.md#9-server-rendering)). Web renderers wire `id`, `htmlFor`, `aria-describedby` (description + feedback when `showFeedback`), `aria-invalid` (`severity === 'error'`) and `aria-required`; React Native renderers map them to `nativeID`, `accessibilityLabelledBy` and `accessibilityState` (§6).
+- `engine.firstInvalid(opts?: { include?: Array<'errors' | 'external' | 'conflicts'> }): DataPath | null` (default: all three). Returns the first failing node (field, group or array) in form order: an `error`-severity message (including `source: 'input'`), an external error, or an unresolved conflict, filtered by `include`. Hidden nodes are skipped unless they are validated (`validateHidden`, [07 §4](./07-effects-and-computed.md#4-hidden-and-disabled-field-policy)).
 - **Focus targets.** `registerElement(el)` (on field, scope and array controllers) returns an unregister function; adapters call it on unmount. Registrations form a stack: the latest wins, and unregistering falls back to the previous one. Removing a row drops every element registered under it. Without a registration, the adapter may fall back to `ids.input`. React offers `useRegisterElement(controller)`, which returns a ref callback that registers on mount and unregisters on unmount, so custom renderers don't wire it by hand: `<input ref={useRegisterElement(controller)} />`. Other adapters use their own ref or action mechanism (Vue template ref, Svelte action, Solid ref), calling `registerElement` the same way.
-- **`controller.focus(): Promise<boolean>`** moves focus through the adapter's `FocusDriver` (§6) only (no meta change; `visited` comes from `handlers.onFocus()`). With no registered element it runs the `reveal(path)` hook (core expands collapsed sections; plugins such as `wizard` add their own, [02 §8.1](./02-state-model.md#81-plugin-api)), waits one `platform.nextFrame` (§6) for a registration, and resolves `false` if none arrives.
-- **Failed submit.** `submit()` (and scoped validation run by a plugin) marks fields touched where it validated, then calls `onSubmitFailed(result)` from `createFormEngine` options for **every** `{ ok: false }` result ([08 §4](./08-loading-and-submission.md#4-submission-pipeline)). Adapters install a default that branches on `result.reason`:
+- **`controller.focus(): Promise<boolean>`** moves focus through the adapter's `FocusDriver` (§6) only (no meta change; `visited` comes from `handlers.onFocus()`). With no registered element it runs the `reveal(path)` hook (core expands collapsed sections; plugins such as `wizard` add their own, [03 §8.1](./03-state-model.md#81-plugin-api)), waits one `platform.nextFrame` (§6) for a registration, and resolves `false` if none arrives.
+- **Failed submit.** `submit()` (and scoped validation run by a plugin) marks fields touched where it validated, then calls `onSubmitFailed(result)` from `createFormEngine` options for **every** `{ ok: false }` result ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). Adapters install a default that branches on `result.reason`:
 
   | `reason` | Default |
   |----------|---------|
@@ -374,7 +374,7 @@ createFormEngine({ …, testIds?: { prefix?: string; format?: (path: DataPath) =
 - **Renderers apply it:** web as `data-testid`, React Native as `testID`. Which elements get it (input, row container, step button) is the renderer's choice. To leave it out of production, pass `testIds: platform.dev ? {…} : false`; with `false`, `testId` is `''` and renderers skip the attribute.
 - **Cost.** A string derived from a path the engine already has, computed lazily per controller.
 - **First-party pieces use it:** the built-in fallbacks (§4.2) and the conformance suite (§9) check that it's passed through.
-- `@formgraph/testing/e2e` exports `fieldSelector(path, { prefix?, format? })`, a pure function that builds the same id or a `[data-testid="…"]` selector. See [15 §24](./15-cookbook.md#24-end-to-end-tests).
+- `@formgraph/testing/e2e` exports `fieldSelector(path, { prefix?, format? })`, a pure function that builds the same id or a `[data-testid="…"]` selector. See [16 §24](./16-cookbook.md#24-end-to-end-tests).
 
 ## 9. Testing
 
@@ -398,7 +398,7 @@ t.expectFeedback('/customer/email', []).expectFeedback('/items[0]/qty', [{ code:
 expect(t.submitted).toEqual([{ payload: { … }, mode: 'full' }]);   // recording fake under the contract's targetId
 ```
 
-- **One generic fake.** Every source has the `AsyncSource` shape ([07 §1.1](./07-async-data-and-registries.md#11-shared-function-shapes)), so one fake covers all of them:
+- **One generic fake.** Every source has the `AsyncSource` shape ([08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)), so one fake covers all of them:
 
   ```ts
   fakeSource<I, O>(impl?: (input: I, ctx: SourceCtx) => O | Promise<O>): FakeSource<I, O>;
@@ -420,4 +420,4 @@ expect(t.submitted).toEqual([{ payload: { … }, mode: 'full' }]);   // recordin
 runAdapterConformance({ name: 'vue', mount: (engine, renderers) => mountVue(engine, renderers) });
 ```
 
-It checks: one subscription per mounted field; no re-render when an unrelated field changes; selector re-renders only on selected changes; unsubscribe on unmount and row removal; row reorder keeps component state (keyed by `RowKey`); server render equals first client render after `resume` (no mismatch, same ids); `onSubmitFailed` default focuses the first invalid node per reason; `registerElement` stack and unregister on unmount/row removal; renderer registry ranking and fallbacks; built-in fallback and `W_NO_RENDERER` (§4.2); `testId` passed through and updated on row moves (§8.1); native computed values/effects re-run when a read handle changes and stop tracking on cleanup (read observer, [02 §2.6](./02-state-model.md#26-tracking-reads-for-framework-adapters)). An adapter that passes may call itself conforming.
+It checks: one subscription per mounted field; no re-render when an unrelated field changes; selector re-renders only on selected changes; unsubscribe on unmount and row removal; row reorder keeps component state (keyed by `RowKey`); server render equals first client render after `resume` (no mismatch, same ids); `onSubmitFailed` default focuses the first invalid node per reason; `registerElement` stack and unregister on unmount/row removal; renderer registry ranking and fallbacks; built-in fallback and `W_NO_RENDERER` (§4.2); `testId` passed through and updated on row moves (§8.1); native computed values/effects re-run when a read handle changes and stop tracking on cleanup (read observer, [03 §2.6](./03-state-model.md#26-tracking-reads-for-framework-adapters)). An adapter that passes may call itself conforming.

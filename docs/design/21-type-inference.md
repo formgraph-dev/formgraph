@@ -1,4 +1,4 @@
-# 20 · Static Type Inference
+# 21 · Static Type Inference
 
 [← Index](./README.md)
 
@@ -39,7 +39,7 @@ interface RegistryEntries {
   severities: string;            // union of names
   gates: string;                 // union of gate names (from severities, plus 'warnings')
   macros: Record<string, { params: unknown; output: unknown }>;
-  // every other keyed registry (07 §1): Record<string, unknown>, keys only
+  // every other keyed registry (08 §1): Record<string, unknown>, keys only
 }
 ```
 
@@ -89,7 +89,7 @@ engine.getValues();                     // Values
 | Node | Type |
 |------|------|
 | field | its field type's `value` |
-| group | object of its children (layout-only groups are flattened, as in 02) |
+| group | object of its children (layout-only groups are flattened, as in 03) |
 | array | `Array<item object>` |
 | `hidden: 'exclude'` or optional by condition | key stays required in `getValues()` (resolved values always exist); the **payload** type marks it optional |
 | dynamic group | union over its inline `schemas` with the discriminator literal; `Json` when schemas come from a `schemaSource` |
@@ -98,7 +98,7 @@ engine.getValues();                     // Values
 `PathsOf<Values>` gives `DataPath` literals: `'name'`, `'addresses'`, `` `addresses[${number}]` ``, `` `addresses[${number}].city` ``.
 
 - **Typed overloads, untyped fallback.** `field`, `setValue`, `array`, `revert`, `touch` take `Paths` with the value type looked up from `Values`. A string that isn't a known path literal (relative `./` refs, `/` PathRefs, computed strings) falls back to `FieldController<Json>`.
-- **Payload.** Without an outbound transformer, `serialize()` and the submit target receive `PayloadOf<C>`: values after `serializeAs` renames and hidden/disabled policies. With a transformer, the transformer's output type. `SubmitTarget` and `OutboundTransformer` are generic over it ([07 §1.1](./07-async-data-and-registries.md#11-shared-function-shapes)).
+- **Payload.** Without an outbound transformer, `serialize()` and the submit target receive `PayloadOf<C>`: values after `serializeAs` renames and hidden/disabled policies. With a transformer, the transformer's output type. `SubmitTarget` and `OutboundTransformer` are generic over it ([08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)).
 - **Renderers** get `FieldController<V>` and the field type's `ui`, as today.
 
 ## 4. Runtime contracts widen

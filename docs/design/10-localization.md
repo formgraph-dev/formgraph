@@ -1,4 +1,4 @@
-# 09 · Localization
+# 10 · Localization
 
 [← Index](./README.md) · Addresses review item C6
 
@@ -35,11 +35,11 @@ createFormEngine({ ..., i18n: { locale: 'de-DE', fallbackLocales: ['en'], resolv
 
 The default resolver (when none is given) knows no keys: it always returns `undefined`, so lookup goes straight to the contract bundles and then `default` (§3.1). Every step formats with the same formatter (§2.1).
 
-Adapters' own built-in texts use keys under `formgraph.` (for example `formgraph.unsupported` in the production fallback, [10 §4.2](./10-rendering-and-adapters.md#42-missing-renderers)), so a resolver can translate or reword them like any other key.
+Adapters' own built-in texts use keys under `formgraph.` (for example `formgraph.unsupported` in the production fallback, [11 §4.2](./11-rendering-and-adapters.md#42-missing-renderers)), so a resolver can translate or reword them like any other key.
 
 ### 2.1 Formatter
 
-The core keeps the resolution pipeline (resolver, bundles, fallback chain, `params`) but formats `{name}` substitution only. The ICU subset formatter (§3.4) is the `icu` plugin, `@formgraph/engine/icu`, which the default entry installs ([02 §8](./02-state-model.md#8-plugins)).
+The core keeps the resolution pipeline (resolver, bundles, fallback chain, `params`) but formats `{name}` substitution only. The ICU subset formatter (§3.4) is the `icu` plugin, `@formgraph/engine/icu`, which the default entry installs ([03 §8](./03-state-model.md#8-plugins)).
 
 ```ts
 import { createFormEngine, createRegistry } from '@formgraph/engine/core';
@@ -124,20 +124,20 @@ Keys in `locales`, `setLocale`, and `fallbackLocales` are **BCP 47 tags**: `de`,
 Shipping every locale in every contract can be heavy. Instead, set `localeSourceId` and register a source:
 
 ```ts
-type LocaleSource = AsyncSource<{ locale: LocaleTag }, LocaleBundle | null>;   // 07 §1.1; null = no bundle for this tag
+type LocaleSource = AsyncSource<{ locale: LocaleTag }, LocaleBundle | null>;   // 08 §1.1; null = no bundle for this tag
 ```
 
 - The engine loads the active locale (and its fallback chain) on start and on `setLocale`. Inline `locales` and loaded bundles merge per key, loaded keys winning.
 - **`setLocale` is atomic.** `engine.form`'s `locale` and every lookup keep using the **old** locale until all bundles in the new chain have loaded (or failed). Then the locale switches and all text re-resolves in one tick (§4). If a bundle fails, the switch still happens, `status` is `'error'`, and the missing keys fall through the chain to `default`.
-- **Latest call wins.** Each `setLocale` bumps a generation and aborts the previous call's loads ([07 §3](./07-async-data-and-registries.md#3-load-lifecycle)); a slower earlier call can never switch the locale after a later one. `setLocale` returns a Promise that resolves when its switch is applied, or when it is superseded.
+- **Latest call wins.** Each `setLocale` bumps a generation and aborts the previous call's loads ([08 §3](./08-async-data-and-registries.md#3-load-lifecycle)); a slower earlier call can never switch the locale after a later one. `setLocale` returns a Promise that resolves when its switch is applied, or when it is superseded.
 - `engine.form`'s `localeStatus` is `'loading' | 'ready' | 'error'` (`useForm('localeStatus')`). While it is `'loading'`, text shows the previous locale, so there's no flash of raw keys.
 - Like every source, it may read a CDN, a bundled file, or storage ([D17](./README.md)).
-- **Server rendering:** loaded bundles are exported in `EngineState.localeBundles` and installed on `resume` without calling the source, so the first client render matches the server ([08 §9](./08-loading-and-submission.md#9-server-rendering)).
+- **Server rendering:** loaded bundles are exported in `EngineState.localeBundles` and installed on `resume` without calling the source, so the first client render matches the server ([09 §9](./09-loading-and-submission.md#9-server-rendering)).
 
 ### 3.4 Rules
 
 - **Locale switches touch text only.** Values, meta, validity, and history are untouched. Validation messages are re-resolved, not re-run.
-- **Macros** that generate their **own** text (not text passed in as arguments) must emit `LocalizableString`s with keys namespaced by the macro (for example `macro.choice-with-other.otherLabel`) and an English `default`. The contract can then translate them like any other key ([14](./14-macros.md)).
+- **Macros** that generate their **own** text (not text passed in as arguments) must emit `LocalizableString`s with keys namespaced by the macro (for example `macro.choice-with-other.otherLabel`) and an English `default`. The contract can then translate them like any other key ([15](./15-macros.md)).
 - **Load-time checks:** a `key` that no bundle provides for some declared locale is a warning (`W_MISSING_TRANSLATION`, `strict`: error), since `default` will show instead. A bundle key that no node references is `W_UNUSED_TRANSLATION`. Bundle values are parsed by the active formatter (§2.1) at load time, so a malformed message fails early (`E_INVALID_MESSAGE`).
 - **Bundles from a `LocaleSource`** can't be checked at load time. The same checks run when each bundle arrives (phase `runtime`): `W_MISSING_TRANSLATION` and `W_UNUSED_TRANSLATION` are reported as dev warnings (never errors, even under `strict`, since the form is already running), and a malformed message is `E_INVALID_MESSAGE` for that key only. The key then falls through as if it were missing.
 - **Supported ICU subset.** The `icu` plugin (§2.1) supports exactly:

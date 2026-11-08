@@ -1,6 +1,6 @@
-# 12 · Option Sources & Cascading Selects
+# 13 · Option Sources & Cascading Selects
 
-[← Index](./README.md) · Builds on [03](./03-paths-and-dependency-graph.md), [06](./06-effects-and-computed.md), [07](./07-async-data-and-registries.md)
+[← Index](./README.md) · Builds on [04](./04-paths-and-dependency-graph.md), [07](./07-effects-and-computed.md), [08](./08-async-data-and-registries.md)
 
 ## 1. Problem
 
@@ -47,7 +47,7 @@ interface MapSource extends Extensible {
   disableWhen?: Expression;
   groupBy?: 'parent';                  // §2.2.1, display only
 }
-interface ProviderSource extends ProviderOptions {   // ProviderOptions extends Extensible   // 07 §2
+interface ProviderSource extends ProviderOptions {   // ProviderOptions extends Extensible   // 08 §2
   source: 'provider';
   disableWhen?: Expression;
 }
@@ -63,7 +63,7 @@ interface CascadeConfig {
 
 ### 2.1 Static + filter
 
-Every option is tested with `filter`. `$option` (the option being tested) is added to the expression scope ([04 §3](./04-expressions.md#3-evaluation-scope)):
+Every option is tested with `filter`. `$option` (the option being tested) is added to the expression scope ([05 §3](./05-expressions.md#3-evaluation-scope)):
 
 ```json
 { "id": "state", "kind": "field", "fieldType": "choice",
@@ -101,14 +101,14 @@ This is shorthand for the most common case: look options up by the parent's valu
 
 For a `multi-choice` parent, the options are the **union** of `map[v]` for each selected `v`, in the parent's selection order.
 
-**Keys from arrays.** Whenever the map `key` evaluates to an array (a `PathRef` to a `multi-choice`, or an expression returning an array), each element is looked up and the lists are merged. An expression that mixes a multi-select value into a string (for example `cat` over an array) produces one meaningless key; the compiler warns (`W_ARRAY_IN_KEY`) when a `cat`/string operator reads a `multi-choice` path. Keep expression keys over single-value parents, and key directly by the multi-select parent instead (the `hierarchy` macro does this, [14 §7.1](./14-macros.md#71-hierarchy)).
+**Keys from arrays.** Whenever the map `key` evaluates to an array (a `PathRef` to a `multi-choice`, or an expression returning an array), each element is looked up and the lists are merged. An expression that mixes a multi-select value into a string (for example `cat` over an array) produces one meaningless key; the compiler warns (`W_ARRAY_IN_KEY`) when a `cat`/string operator reads a `multi-choice` path. Keep expression keys over single-value parents, and key directly by the multi-select parent instead (the `hierarchy` macro does this, [15 §7.1](./15-macros.md#71-hierarchy)).
 
 **Child values must be unique across the merged lists.** If two selected parents contribute the same child `value` (for example `springfield` under both `IL` and `MO`), the stored value couldn't say which one was meant. So instead of silently merging them:
 
 - **Load time:** when the `key` is a plain `PathRef` to a `multi-choice` field, every child `value` must be unique across the **whole** map. A duplicate is `E_AMBIGUOUS_OPTION`, naming both map keys. (For expression keys, the engine can't know which keys combine, so the check happens at runtime.)
 - **Runtime** (expression keys and provider sources): a collision in the merged list sets `status: 'error'` with `E_AMBIGUOUS_OPTION`, and the colliding options are left out of `items`. This is a contract bug, so it also logs a dev error.
 
-Use globally unique values (`springfield-il`) for children of multi-select parents. The `hierarchy` macro enforces this at expansion ([14 §7.1](./14-macros.md#71-hierarchy)).
+Use globally unique values (`springfield-il`) for children of multi-select parents. The `hierarchy` macro enforces this at expansion ([15 §7.1](./15-macros.md#71-hierarchy)).
 
 **Grouping (opt-in, display only).** With `groupBy: 'parent'`, each resolved option carries its parent:
 
@@ -128,7 +128,7 @@ interface ResolvedOption {
 - The parent is the option of the field named by `key` when it's a `PathRef`. With an expression key (as the `hierarchy` macro generates), it's the **immediate** parent level: the last `var` path in the key expression.
 - `group` is set whenever `groupBy: 'parent'` is on, even with one parent selected, so the list doesn't change shape when a second parent is picked. Renderers that want sections only for several parents can check `new Set(items.map(o => o.group?.value)).size > 1`.
 - Grouping never changes values, validation, or submission. Renderers without grouped lists (`optgroup`, sectioned pickers) ignore `group`.
-- Provider sources can't infer the parent, so their result transformer sets `group` itself on each `SelectOption` if wanted (it receives `deps`, [07 §2](./07-async-data-and-registries.md#2-provider-options)).
+- Provider sources can't infer the parent, so their result transformer sets `group` itself on each `SelectOption` if wanted (it receives `deps`, [08 §2](./08-async-data-and-registries.md#2-provider-options)).
 
 ### 2.3 Provider
 
@@ -137,28 +137,28 @@ interface ResolvedOption {
   "queryTransformerId": "geo.byRegion", "dependsOn": ["./country", "./state"] }
 ```
 
-The query transformer receives `deps: { './country': 'US', './state': 'CA' }` ([07 §2](./07-async-data-and-registries.md#2-provider-options)). The engine can't see inside a transformer, so `options.dependsOn` is **required** (`cascade.dependsOn` isn't used for providers). Leaving it out is a compile error (`E_PROVIDER_DEPS_REQUIRED`). Set it to `[]` if the options really don't depend on anything.
+The query transformer receives `deps: { './country': 'US', './state': 'CA' }` ([08 §2](./08-async-data-and-registries.md#2-provider-options)). The engine can't see inside a transformer, so `options.dependsOn` is **required** (`cascade.dependsOn` isn't used for providers). Leaving it out is a compile error (`E_PROVIDER_DEPS_REQUIRED`). Set it to `[]` if the options really don't depend on anything.
 
 One data source can serve a whole hierarchy (`geo.options` with a `level` param), so the registry doesn't grow by one entry per level.
 
 ## 3. How it runs
 
-The available options are a **facet** of the field (`options`) in the dependency graph ([03 §5](./03-paths-and-dependency-graph.md#5-dependency-graph)):
+The available options are a **facet** of the field (`options`) in the dependency graph ([04 §5](./04-paths-and-dependency-graph.md#5-dependency-graph)):
 
 ```
 ./country.value ──► ./state.options ──► ./state.value (validity check) ──► ./city.options ──► …
 ```
 
 When a dependency's value changes in a tick:
-1. `options` becomes stale. For static and map sources it is recomputed synchronously in the same tick. For provider sources, the in-flight load is aborted, a new request generation starts, and `status` becomes `loading` ([07 §3](./07-async-data-and-registries.md#3-load-lifecycle)).
+1. `options` becomes stale. For static and map sources it is recomputed synchronously in the same tick. For provider sources, the in-flight load is aborted, a new request generation starts, and `status` becomes `loading` ([08 §3](./08-async-data-and-registries.md#3-load-lifecycle)).
 2. The **validity check** for the child's current value runs (§4). If the value changes, that is a normal write with origin `effect`, so the grandchild reacts in the same way. Chains need no special handling.
 3. `whenEmpty` is checked (§5).
 
 ## 4. Invalidation
 
-`onChange` only applies when the dependency change came from a write whose origin has `ORIGIN_POLICY[origin].invalidate === true` ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)); custom `x-` origins inherit the flag from the origin they extend. For every origin with `invalidate: false`, the child value is **trusted**: the options still reload, but the value isn't touched. This document never lists origins itself; the policy table is the single source. It prevents "loading the form cleared every dependent select".
+`onChange` only applies when the dependency change came from a write whose origin has `ORIGIN_POLICY[origin].invalidate === true` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)); custom `x-` origins inherit the flag from the origin they extend. For every origin with `invalidate: false`, the child value is **trusted**: the options still reload, but the value isn't touched. This document never lists origins itself; the policy table is the single source. It prevents "loading the form cleared every dependent select".
 
-A query transformer that returns `null` (skip, [07 §2](./07-async-data-and-registries.md#2-provider-options)) is not an options change for this purpose: `status` is `'idle'`, the value is left alone, and the validity check waits until a real query returns options.
+A query transformer that returns `null` (skip, [08 §2](./08-async-data-and-registries.md#2-provider-options)) is not an options change for this purpose: `status` is `'idle'`, the value is left alone, and the validity check waits until a real query returns options.
 
 | `onChange` | Behavior |
 |------------|----------|
@@ -172,14 +172,14 @@ A query transformer that returns `null` (skip, [07 §2](./07-async-data-and-regi
 - **static / map:** synchronous. Is the value among the newly computed options?
 - **provider:** possibly asynchronous. While options are loading, the value is kept and the field is marked `meta.optionsPending`. Once they arrive:
   - If the response is complete (`nextState === null` on the first page), membership decides.
-  - If the results are paginated or search-based, a missing value doesn't mean it's invalid. The engine calls the field's `resolveSelectedSourceId` ([07 §2](./07-async-data-and-registries.md#2-provider-options)) with the new deps. The value is valid if that source resolves it. If neither check is available, the engine falls back to `clear` and warns at compile time (`W_CASCADE_UNVERIFIABLE`).
+  - If the results are paginated or search-based, a missing value doesn't mean it's invalid. The engine calls the field's `resolveSelectedSourceId` ([08 §2](./08-async-data-and-registries.md#2-provider-options)) with the new deps. The value is valid if that source resolves it. If neither check is available, the engine falls back to `clear` and warns at compile time (`W_CASCADE_UNVERIFIABLE`).
 - If the parent changes again before this resolves, the load generation check throws away the stale answer. Only the latest parent value can invalidate the child.
 
 ### 4.2 Built-in `in-options` validator
 
-Every field with an options source gets an implicit `in-options` rule. It reuses the validity check and also fails for values whose option is disabled ([§2.1.1](#211-disabling-options)), so a value set by host code, or kept by `keep`, gets a visible error instead of being submitted silently. It can be turned off with `validateInOptions: false`, for example for a combobox renderer that accepts free entry. (For an "Other, please specify" pattern, prefer a separate text field, [15 §3](./15-cookbook.md#3-other-option-with-free-text).)
+Every field with an options source gets an implicit `in-options` rule. It reuses the validity check and also fails for values whose option is disabled ([§2.1.1](#211-disabling-options)), so a value set by host code, or kept by `keep`, gets a visible error instead of being submitted silently. It can be turned off with `validateInOptions: false`, for example for a combobox renderer that accepts free entry. (For an "Other, please specify" pattern, prefer a separate text field, [16 §3](./16-cookbook.md#3-other-option-with-free-text).)
 
-Submit waits for any `optionsPending` validity checks, the same way it waits for async validation ([05 §4](./05-validation.md#4-async-validation)).
+Submit waits for any `optionsPending` validity checks, the same way it waits for async validation ([06 §4](./06-validation.md#4-async-validation)).
 
 ## 5. Empty parent
 
@@ -187,7 +187,7 @@ A dependency counts as "empty" if it is `null`, `undefined`, `''`, or `[]`.
 
 | `whenEmpty` | Behavior |
 |-------------|----------|
-| `disable` (default) | The `disabled` facet is true, options are `[]`, and no load happens. Under the default `whenDisabled: 'exclude'` policy ([06 §4](./06-effects-and-computed.md#4-hidden-and-disabled-field-policy)), the value isn't submitted |
+| `disable` (default) | The `disabled` facet is true, options are `[]`, and no load happens. Under the default `whenDisabled: 'exclude'` policy ([07 §4](./07-effects-and-computed.md#4-hidden-and-disabled-field-policy)), the value isn't submitted |
 | `hide` | The `visible` facet is false. The field's `whenHidden` policy applies (example below) |
 | `show-empty` | Enabled, with an empty list and a "Select {parent} first" placeholder |
 | `load` | Treat empty as a real value and load/compute anyway (for example "all cities" when no state is picked) |
@@ -226,13 +226,13 @@ These writes have origin `effect`, so they would normally trigger the parents' c
 
 ## 8. Arrays and caching
 
-- Inside a row, `./country` resolves to that row ([03 §2](./03-paths-and-dependency-graph.md#2-path-grammar)). Option state is kept per **row key path**, so reordering rows doesn't mix up their lists.
+- Inside a row, `./country` resolves to that row ([04 §2](./04-paths-and-dependency-graph.md#2-path-grammar)). Option state is kept per **row key path**, so reordering rows doesn't mix up their lists.
 - Static and map results are memoized per dependency values, so 50 rows with `country = US` share one computed list.
-- Provider results are cached by provider id plus the query transformer's output, with `cache.key` deciding whether deps and search text also vary the key ([07 §3](./07-async-data-and-registries.md#3-load-lifecycle)). Identical in-flight loads from different rows share one call: it is reference-counted, aborted only when no row still waits for it, and each row applies the result only if its own generation still matches.
+- Provider results are cached by provider id plus the query transformer's output, with `cache.key` deciding whether deps and search text also vary the key ([08 §3](./08-async-data-and-registries.md#3-load-lifecycle)). Identical in-flight loads from different rows share one call: it is reference-counted, aborted only when no row still waits for it, and each row applies the result only if its own generation still matches.
 
 ## 9. Renderer view
 
-The `options` handle on a `FieldController` ([10 §2](./10-rendering-and-adapters.md#2-headless-field-api)) exposes:
+The `options` handle on a `FieldController` ([11 §2](./11-rendering-and-adapters.md#2-headless-field-api)) exposes:
 
 ```ts
 interface OptionsState {
@@ -277,9 +277,9 @@ Renderers don't need any cascade-specific code. A plain select renderer works fo
 
 ## 11. Open questions
 
-- **Q10 (resolved: C).** Whole hierarchies are written with the `hierarchy` macro ([14 §7.1](./14-macros.md#71-hierarchy)), which expands into flat per-level `map` sources keyed by the joined ancestor values. Submitted values stay plain. Options considered:
+- **Q10 (resolved: C).** Whole hierarchies are written with the `hierarchy` macro ([15 §7.1](./15-macros.md#71-hierarchy)), which expands into flat per-level `map` sources keyed by the joined ancestor values. Submitted values stay plain. Options considered:
   - **A, flat per level (current):** each level has its own validation, `whenEmpty`, and cascade handling. Child keys must be unique across parents, or compound (`"US|IL"`).
   - **B, a core `tree` source:** the hierarchy lives in one place, and duplicate names under different parents are natural. But it's more contract surface, needs a depth check, and bloats contracts.
-  - **C, a `hierarchy` macro ([14](./14-macros.md)):** expands a tree into A with compound keys.
+  - **C, a `hierarchy` macro ([15](./15-macros.md)):** expands a tree into A with compound keys.
 
 - **Q11 (resolved: detect + opt-in grouping).** Colliding child values under a multi-select parent are an error (`E_AMBIGUOUS_OPTION`), and `groupBy: 'parent'` adds display-only `group` info ([§2.2.1](#221-multi-select-parents)). Qualified values (`{ parent, value }`) were deferred until a real form needs the same child under several selected parents.

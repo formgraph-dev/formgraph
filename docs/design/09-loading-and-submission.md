@@ -1,4 +1,4 @@
-# 08 · Loading & Submission
+# 09 · Loading & Submission
 
 [← Index](./README.md) · Addresses review items S4, B3
 
@@ -18,7 +18,7 @@ interface SubmissionConfig {
   transformerId?: string;              // outbound: form values → payload
   mode?: 'full' | 'patch';             // patch = dirty paths only; default 'full'
   awaitAsync?: boolean;                // wait for in-flight async validation; default true
-  gates?: Record<string, 'allow' | 'confirm' | 'block'>;   // per-gate warning policy; default { warnings: 'allow' }, see 05 §7.3
+  gates?: Record<string, 'allow' | 'confirm' | 'block'>;   // per-gate warning policy; default { warnings: 'allow' }, see 06 §7.3
   conflicts?: 'block' | 'allow';              // default 'block', see §7
 }
 ```
@@ -27,7 +27,7 @@ interface SubmissionConfig {
 
 ```
 phase=loading
-entity = await entitySources[id]({ id: params[paramKey] }, ctx)   // AsyncSource, 07 §1.1
+entity = await entitySources[id]({ id: params[paramKey] }, ctx)   // AsyncSource, 08 §1.1
 values = applyInboundMapping(entity)        // serializeAs reverse map, then inbound transformer
 assign row keys (identityKey-aware)
 await dynamic-group schema loads for loaded discriminators (parallel)
@@ -39,13 +39,13 @@ phase=ready                   (`ready` resolves)
 
 ### 2.1 Missing vs. null
 
-Precedence goes by key presence ([02 §3](./02-state-model.md#3-precedence-by-presence-not-nullishness)), so an explicit `null` in the loaded values is a real value and hides the default. A key that's **absent** is different: by default the field falls through to its `default`.
+Precedence goes by key presence ([03 §3](./03-state-model.md#3-precedence-by-presence-not-nullishness)), so an explicit `null` in the loaded values is a real value and hides the default. A key that's **absent** is different: by default the field falls through to its `default`.
 
 | Loaded values | `missing: 'default'` (default) | `missing: 'empty'` |
 |---------------|--------------------------------|--------------------|
 | `{ "country": "FR" }` | `"FR"` | `"FR"` |
 | `{ "country": null }` | `null` | `null` |
-| `{}` (key absent) | the default, e.g. `"US"` | the field type's empty value (`null`, `''`, `false`, `[]`, as for the [`clear` action](./06-effects-and-computed.md#21-origin-policy)), written into `loaded` |
+| `{}` (key absent) | the default, e.g. `"US"` | the field type's empty value (`null`, `''`, `false`, `[]`, as for the [`clear` action](./07-effects-and-computed.md#21-origin-policy)), written into `loaded` |
 
 - `'default'` suits records created before a field existed: the new field shows its default. Note that full-mode submit then sends that default.
 - `'empty'` suits backends where "absent" means "never set": defaults apply only to new records (when nothing is loaded at all).
@@ -66,7 +66,7 @@ Precedence goes by key presence ([02 §3](./02-state-model.md#3-precedence-by-pr
 | `replace-unchanged` | Like `preserve-edits`, then every path in `current` whose value equals the **old** baseline (edited but not really changed) is reverted. Arrays are compared atomically | Same as `preserve-edits` |
 | `replace` | Cleared | `meta.touched`, `meta.visited`, `meta.conflict`, `meta.stash`, external errors |
 
-With every policy, row keys of replaced arrays are matched by `identityKey` and kept; without one they're reassigned ([03 §4](./03-paths-and-dependency-graph.md#4-array-row-identity)), and meta on the old keys is dropped.
+With every policy, row keys of replaced arrays are matched by `identityKey` and kept; without one they're reassigned ([04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity)), and meta on the old keys is dropped.
 
 A `reload` or `restore` call that starts while an earlier one is still pending supersedes it: the earlier call rejects with `E_SUPERSEDED` and writes nothing (latest wins).
 
@@ -78,29 +78,29 @@ After a successful submit, the engine reloads with the target's response (if it 
 engine.submit():                  // submit({ confirm?: string[] }): Promise<SubmitResult>
   if a submit is in flight → return its promise (no second run, no error)
   submitCount++ ; phase=submitting
-  force-compile validators and option state for eligible fields (02 §6.3)
+  force-compile validators and option state for eligible fields (03 §6.3)
   start option loads that gate validity, and async rules with no settled result for the current value
   run all sync validations (trigger=submit) on fields eligible per validateHidden/validateDisabled
   if awaitAsync: await in-flight async validations and busy field-type work (assets, 01 §3.4)
-  await pending option loads that gate validity (12 §4.2 pendingValidity)
-  if any severity=error (including sources 'input' and 'component', 10 §2.1–2.2)
+  await pending option loads that gate validity (13 §4.2 pendingValidity)
+  if any severity=error (including sources 'input' and 'component', 11 §2.1–2.2)
      or any field-type pending work failed (assets; 01 §3.4)   → fail('errors')
   if async validation still in flight (awaitAsync: false)       → fail('validating')
   if field-type work still busy (awaitAsync: false)             → fail('assets-pending')
   if conflicts and submission.conflicts=block                   → fail('conflicts', { paths })
   confirm(opts.confirm) ; gated = gates with notices whose policy is block,
-                            or confirm and not confirmed (05 §7.3)
+                            or confirm and not confirmed (06 §7.3)
   if gated non-empty                                            → fail('gated', { gates })
   plugin 'before' hooks (§4.1)                                  → fail(hook's reason)
-  payload = serialize()                   // outbound transformer throws → fail('transform') (07 §1.1)
-  result  = await submitTargets[targetId]({ payload, mode, confirmed }, ctx)   // AsyncSource, 07 §1.1
+  payload = serialize()                   // outbound transformer throws → fail('transform') (08 §1.1)
+  result  = await submitTargets[targetId]({ payload, mode, confirmed }, ctx)   // AsyncSource, 08 §1.1
   if result.errors → map external errors (§5)                   → fail('external')
   if result.entity: reload({ entity: result.entity, policy: 'replace' })
   phase=submitted
   apply queued applyExternal changes (§7)
   return {ok:true}
 
-fail(reason, extra?): phase=ready; r = {ok:false, reason, ...extra}; onSubmitFailed(r) (10 §8); return r
+fail(reason, extra?): phase=ready; r = {ok:false, reason, ...extra}; onSubmitFailed(r) (11 §8); return r
 ```
 
 ```ts
@@ -111,26 +111,26 @@ type SubmitResult =
   | { ok: false; reason: 'gated'; gates: GateStop[] }
   | { ok: false; reason: `x-${string}`; notices?: NoticeInput[] };   // a plugin's `before` hook stopped the submit (§4.1)
 
-type GateStop = { gate: string; policy: 'confirm' | 'block'; notices: Array<Notice & { path: DataPath }> };   // 05 §7.3
+type GateStop = { gate: string; policy: 'confirm' | 'block'; notices: Array<Notice & { path: DataPath }> };   // 06 §7.3
 ```
 
 #### 4.1 Plugin submit hooks
 
-Plugins observe the pipeline with `ctx.submission.on(event, fn)` ([02 §8.1](./02-state-model.md#81-plugin-api)); autosave, audit and analytics plugins use it.
+Plugins observe the pipeline with `ctx.submission.on(event, fn)` ([03 §8.1](./03-state-model.md#81-plugin-api)); autosave, audit and analytics plugins use it.
 
 ```ts
 type SubmitHook = (e: { mode: SubmitMode; confirmed: string[]; result?: SubmitResult; signal: AbortSignal }) => void | Promise<void> | { stop: `x-${string}`; notices?: NoticeInput[] };
 ```
 
-- `before` runs after validation and gates pass, before `serialize()`. It may be async (awaited, aborted with the submit's `signal`) and may return `{ stop: 'x-…' }`, which fails the submit with that reason (`notices` become form-level notices). It's for programmatic stops; asking the user to confirm is a gate ([05 §7.3](./05-validation.md#73-gates-submit-policy-for-warnings)).
+- `before` runs after validation and gates pass, before `serialize()`. It may be async (awaited, aborted with the submit's `signal`) and may return `{ stop: 'x-…' }`, which fails the submit with that reason (`notices` become form-level notices). It's for programmatic stops; asking the user to confirm is a gate ([06 §7.3](./06-validation.md#73-gates-submit-policy-for-warnings)).
 - `success` and `failure` run after the result is known, observe only (a return value is ignored), and can't change it. `failure` hooks run **before** the host's `onSubmitFailed`.
 - Hooks run in plugin order. A thrown hook is reported through `onDiagnostic` and doesn't change the result, except that a throwing `before` stops the submit with `reason: 'x-<plugin>'`.
 
-`onSubmitFailed` runs for **every** `{ ok: false }` result; the adapters' default branches on `reason` ([10 §8](./10-rendering-and-adapters.md#8-accessibility)).
+`onSubmitFailed` runs for **every** `{ ok: false }` result; the adapters' default branches on `reason` ([11 §8](./11-rendering-and-adapters.md#8-accessibility)).
 
 ### Public building blocks
 
-`submit()` is a composition of public methods that hosts can call directly (for example for drafts, or submitting while invalid, see [15 §1](./15-cookbook.md#1-autosave-and-drafts) and [§14](./15-cookbook.md#14-submit-while-invalid)):
+`submit()` is a composition of public methods that hosts can call directly (for example for drafts, or submitting while invalid, see [16 §1](./16-cookbook.md#1-autosave-and-drafts) and [§14](./16-cookbook.md#14-submit-while-invalid)):
 
 ```ts
 engine.validate({ trigger?: 'submit', paths?: PathRef[] }): Promise<{ ok: boolean; notices: Array<Notice & { path: DataPath }> }>   // path: the node each message belongs to
@@ -139,15 +139,15 @@ engine.mapExternalErrors(errors: ExternalErrors): void
 engine.reload({ entity?, policy? })
 ```
 
-`serialize()` is synchronous and never mutates state; like `validate()`, it force-compiles what it needs first ([02 §6.3](./02-state-model.md#63-lazy-compile)). With `validate: true`, it runs a sync validation pass (no async sources are called or awaited), then throws `E_INVALID` if any `error`-severity messages exist, including existing async and external ones. Warnings and info don't affect it.
+`serialize()` is synchronous and never mutates state; like `validate()`, it force-compiles what it needs first ([03 §6.3](./03-state-model.md#63-lazy-compile)). With `validate: true`, it runs a sync validation pass (no async sources are called or awaited), then throws `E_INVALID` if any `error`-severity messages exist, including existing async and external ones. Warnings and info don't affect it.
 
 ### serialize()
 
-1. Walk the CompiledSchema and include each field according to its effective `whenHidden` / `whenDisabled` policies ([06 §4](./06-effects-and-computed.md#4-hidden-and-disabled-field-policy)).
+1. Walk the CompiledSchema and include each field according to its effective `whenHidden` / `whenDisabled` policies ([07 §4](./07-effects-and-computed.md#4-hidden-and-disabled-field-policy)).
 2. `mode:'patch'`: only dirty paths are included (arrays as whole values).
 3. Assets serialize as `{ ref, name, size, mime, meta? }` ([01 §3.3](./01-schema-contract.md#33-core-config-and-ui)); `status`, `progress`, and `error` are stripped.
 4. Remap data paths to `serializeAs` wire paths (dot paths create nested objects).
-5. Run the outbound transformer if one is configured. It receives `({ payload, mode, loaded, values, dirtyPaths }, ctx)` (`OutboundTransformer`, [07 §1.1](./07-async-data-and-registries.md#11-shared-function-shapes)): the payload so far, the saved data as loaded (after the inbound mapping), the full resolved values, and the list of changed paths. That's enough to compute row-level diffs ([15 §17](./15-cookbook.md#17-row-level-diffs-for-patch-submissions)).
+5. Run the outbound transformer if one is configured. It receives `({ payload, mode, loaded, values, dirtyPaths }, ctx)` (`OutboundTransformer`, [08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)): the payload so far, the saved data as loaded (after the inbound mapping), the full resolved values, and the list of changed paths. That's enough to compute row-level diffs ([16 §17](./16-cookbook.md#17-row-level-diffs-for-patch-submissions)).
 
 In `patch` mode, **arrays are always atomic** (Q4): if anything in an array changed, the whole array is sent. Row-level diffs are a transformer concern, not a contract feature.
 
@@ -156,14 +156,14 @@ In `patch` mode, **arrays are always atomic** (Q4): if anything in an array chan
 The submit target returns:
 
 ```ts
-type ExternalErrors = Array<{ path: string; message: Text; code?: string; severity?: Severity }>;  // severity default 'error'; registered x- severities allowed, unknown → 'error' (05 §7.6)
+type ExternalErrors = Array<{ path: string; message: Text; code?: string; severity?: Severity }>;  // severity default 'error'; registered x- severities allowed, unknown → 'error' (06 §7.6)
 ```
 
-`path` is a **wire path** (`serializeAs` space) or a data path. The engine maps it back to data paths, then to row key paths. If the path goes **deeper than a field** (`/grid/rows/3/qty` when `grid` is a field), the message goes on that field and the remainder becomes its `subPath` ([05 §5](./05-validation.md#5-notice-shape)). Errors that can't be mapped go to `FormState.notices` (a form-level banner). External errors on a path clear on the next user edit to that path. `code` is kept on the resulting `Notice` ([05 §5](./05-validation.md#5-notice-shape)).
+`path` is a **wire path** (`serializeAs` space) or a data path. The engine maps it back to data paths, then to row key paths. If the path goes **deeper than a field** (`/grid/rows/3/qty` when `grid` is a field), the message goes on that field and the remainder becomes its `subPath` ([06 §5](./06-validation.md#5-notice-shape)). Errors that can't be mapped go to `FormState.notices` (a form-level banner). External errors on a path clear on the next user edit to that path. `code` is kept on the resulting `Notice` ([06 §5](./06-validation.md#5-notice-shape)).
 
 ## 6. JSON Schema export of the submitted data
 
-Borrowed from JSON Forms ([13](./13-prior-art.md)). This lets backends validate submissions without knowing the contract format.
+Borrowed from JSON Forms ([14](./14-prior-art.md)). This lets backends validate submissions without knowing the contract format.
 
 ```ts
 import { toPayloadSchema } from '@formgraph/contract';
@@ -192,7 +192,7 @@ The export is a best-effort **outer bound**. Every valid submission validates, b
 
 ## 7. External updates and conflicts
 
-Decided in Q6 ([11](./11-open-questions-and-roadmap.md)). For changes from outside this form instance that arrive while the user is editing: another user or tab saved, a workflow changed a status, a sync engine merged data, or a push channel sent a patch. This isn't real-time collaboration: there's no text merging and no presence.
+Decided in Q6 ([12](./12-open-questions-and-roadmap.md)). For changes from outside this form instance that arrive while the user is editing: another user or tab saved, a workflow changed a status, a sync engine merged data, or a push channel sent a patch. This isn't real-time collaboration: there's no text merging and no presence.
 
 ```ts
 engine.applyExternal(
@@ -201,8 +201,8 @@ engine.applyExternal(
 );
 ```
 
-- Updates **only the given paths** in the `loaded` layer, with origin `external`: no effects, and cascades trust the value ([12 §4](./12-option-sources-and-cascading.md#4-invalidation)). The inbound transformer is **not** run, because it works on whole entities. Send the mapped value shape.
-- Arrays are atomic, as everywhere else. A change replaces the whole array, and row keys are matched by `identityKey` when there is one ([03 §4](./03-paths-and-dependency-graph.md#4-array-row-identity)).
+- Updates **only the given paths** in the `loaded` layer, with origin `external`: no effects, and cascades trust the value ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)). The inbound transformer is **not** run, because it works on whole entities. Send the mapped value shape.
+- Arrays are atomic, as everywhere else. A change replaces the whole array, and row keys are matched by `identityKey` when there is one ([04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity)).
 - During `submit()`, external changes are queued and applied after it finishes. If the submit reloaded from a response entity, each queued change is first compared with the new `loaded` value at its path; changes already reflected there are dropped.
 
 ### 7.1 Conflict detection
@@ -222,13 +222,13 @@ The same rules apply to every changed path in `applyExternal`, in `reload` with 
 interface Conflict { path: DataPath; base: Json; local: Json; external: Json }
 ```
 
-Per-field handles on the `FieldController` ([10 §2](./10-rendering-and-adapters.md#2-headless-field-api)): `conflict: Readable<Conflict | null>` and `resolveConflict('local' | 'external')`.
+Per-field handles on the `FieldController` ([11 §2](./11-rendering-and-adapters.md#2-headless-field-api)): `conflict: Readable<Conflict | null>` and `resolveConflict('local' | 'external')`.
 
 - `local`: keep the local value. The flag is cleared. The field stays dirty, now relative to the new `loaded`.
 - `external`: revert `current[p]`. The flag is cleared, and the field shows `external`.
 - A user edit to a conflicted field **doesn't** clear the flag, so a conflict can't be dismissed by accident.
 
-Conflicts live in `meta.conflict`, keyed by row key path like other meta ([02 §5](./02-state-model.md#5-field-meta-and-form-status)), so they follow moved rows. A conflict is cleared by:
+Conflicts live in `meta.conflict`, keyed by row key path like other meta ([03 §5](./03-state-model.md#5-field-meta-and-form-status)), so they follow moved rows. A conflict is cleared by:
 - `resolveConflict` (either side);
 - deleting `current[p]` by any means (`revert`, undo, a later external change that matches `local`);
 - `reload` with `replace`, `reset`, and `restore` (which recomputes conflicts for its own paths).
@@ -237,20 +237,20 @@ Form level: `conflictCount`, and `submission.conflicts: 'block' | 'allow'` (defa
 
 ### 7.3 Interaction with undo
 
-The `external` origin has `history: 'clear-overlap'` ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)): `applyExternal` clears undo/redo history only if a changed path appears in a recorded step ([02 §6.2](./02-state-model.md#62-undo--redo-opt-in)). Otherwise history is kept, so frequent unrelated pushes don't wipe the user's undo stack.
+The `external` origin has `history: 'clear-overlap'` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): `applyExternal` clears undo/redo history only if a changed path appears in a recorded step ([03 §6.2](./03-state-model.md#62-undo--redo-opt-in)). Otherwise history is kept, so frequent unrelated pushes don't wipe the user's undo stack.
 
 ## 8. Snapshots (drafts)
 
 A draft must reopen with the user's edits **and** their change indicators. Saving the payload and loading it back doesn't do that: the draft would become the baseline, so nothing would be dirty. `serialize()` also drops excluded fields and renames paths, so it loses data.
 
-Provided by the `drafts` plugin ([02 §8](./02-state-model.md#8-plugins)), which the default entry installs.
+Provided by the `drafts` plugin ([03 §8](./03-state-model.md#8-plugins)), which the default entry installs.
 
-Instead, a snapshot saves the **`current` layer** (exactly what the user changed), and `restore` puts it back on top of the **same baseline**: the contract defaults for a new record, or the same saved entity for an existing one. Dirty ([02 §4](./02-state-model.md#4-dirty-semantics)) then works unchanged, and the indicators come back without any stored indicator state.
+Instead, a snapshot saves the **`current` layer** (exactly what the user changed), and `restore` puts it back on top of the **same baseline**: the contract defaults for a new record, or the same saved entity for an existing one. Dirty ([03 §4](./03-state-model.md#4-dirty-semantics)) then works unchanged, and the indicators come back without any stored indicator state.
 
 ```ts
 engine.snapshot(): Snapshot                 // synchronous, pure JSON
 engine.restore(snapshot, { onStale?: 'conflict' | 'keep-draft' | 'drop' /* default 'conflict' */ }): Promise<RestoreResult>
-engine.revision: Readable<number>           // core (02 §7): bumps on each commit with a non-empty diff to `current`, `rows` or `stash`
+engine.revision: Readable<number>           // core (03 §7): bumps on each commit with a non-empty diff to `current`, `rows` or `stash`
 
 interface Snapshot {
   version: 1;
@@ -261,7 +261,7 @@ interface Snapshot {
   current: Json;                            // the sparse top layer
   rows: Record<DataPath, RowKey[]>;         // array row identity, so per-row indicators and errors line up
   base: Record<DataPath, Json | null>;      // baseline of each stored leaf of `current` when taken
-  stash?: Json;                             // dynamic-group orphans kept by orphanPolicy 'stash' (07 §5)
+  stash?: Json;                             // dynamic-group orphans kept by orphanPolicy 'stash' (08 §5)
   touched?: DataPath[];                     // row key paths; restored so messages show as they did
   takenAt: string;                          // ISO timestamp
 }
@@ -269,7 +269,7 @@ interface Snapshot {
 interface RestoreResult { applied: DataPath[]; conflicts: DataPath[]; dropped: DataPath[] }
 ```
 
-**Granularity.** The paths of a snapshot (`base` keys, `RestoreResult` lists, stale checks) are the **stored leaves** of `current`: each array counts as one entry ([02 §3.1](./02-state-model.md#31-resolution-granularity)). `touched` is mapped through the restored row keys; entries under rows that no longer match are dropped.
+**Granularity.** The paths of a snapshot (`base` keys, `RestoreResult` lists, stale checks) are the **stored leaves** of `current`: each array counts as one entry ([03 §3.1](./03-state-model.md#31-resolution-granularity)). `touched` is mapped through the restored row keys; entries under rows that no longer match are dropped.
 
 **Field-type filter.** `snapshot()` stores each value through its field type's `toSnapshot` hook ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)). For assets (`assets` plugin) only values with status `ready` are kept. Others (pending, uploading, error) are left out with `W_SNAPSHOT_ASSET_DROPPED`, since their uploads don't survive the session.
 
@@ -297,17 +297,17 @@ savedRevision = engine.revision.get();     // the restored state is what's store
 1. **Waits for `ready`**: loading and dynamic-group schema loads finish first. Rejects with `E_RESTORE_BUSY` while `phase` is `submitting`. A later `reload` or `restore` supersedes a pending one (§3).
 2. **Validates the snapshot.** Snapshots are untrusted input (they come back from storage): the shape is checked against the `Snapshot` schema first (`E_SNAPSHOT_INVALID`). Older snapshot `version`s are upgraded by built-in migrations, like contract migrations ([01 §7](./01-schema-contract.md#7-versioning-and-load-time-validation)). A different `formId`, or a `version` with no migration, rejects with `E_SNAPSHOT_MISMATCH`. A different `contractHash` isn't an error: each path is checked instead (rule 5).
 3. **Dynamic groups first.** Discriminators are ordinary paths in `current`. They are written first, the sub-schema loads they trigger are awaited, and then the rest is applied, so every restored path has its node.
-4. **Writes with origin `restore`** ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)): `current` is **replaced atomically** (not merged), with no effects (origin policy `history: 'clear'`). Row keys from `rows` are reused, and `stash` and `touched` are put back. Conflicts are cleared, then recomputed by rule 6.
+4. **Writes with origin `restore`** ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): `current` is **replaced atomically** (not merged), with no effects (origin policy `history: 'clear'`). Row keys from `rows` are reused, and `stash` and `touched` are put back. Conflicts are cleared, then recomputed by rule 6.
 5. **Paths that no longer exist** in the contract are dropped with `W_SNAPSHOT_PATH_DROPPED`. Values that exist but are now invalid (an option was removed, a rule changed) are kept and simply fail validation.
 6. **Stale drafts.** For each path `p`, with `base` = `snapshot.base[p]`, `external` = the baseline now, and `local` = the draft value, the [§7.1](#71-conflict-detection) table decides: if `base` equals `external`, or there's no draft value, the draft applies; if `local` equals `external`, the path is dropped from `current` with no conflict. Otherwise (a real conflict) `onStale` decides:
    - `conflict` (default): the draft value is applied and flagged as a conflict (§7.2). Submit is blocked until resolved (`submission.conflicts`).
    - `keep-draft`: the draft value wins silently.
    - `drop`: the draft value is discarded for that path.
-7. **Cascade invalidation** ([12 §4](./12-option-sources-and-cascading.md#4-invalidation)) then runs for paths whose baseline changed since the snapshot or that were dropped, since their dependents were saved against other values. Values that restored unchanged aren't invalidated.
+7. **Cascade invalidation** ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)) then runs for paths whose baseline changed since the snapshot or that were dropped, since their dependents were saved against other values. Values that restored unchanged aren't invalidated.
 
 ### 8.3 Notes
 
-- **Dirty vs. draft status are different things.** Field indicators show "changed from defaults / saved data" and survive any number of draft saves. "Changed since the last draft save" is host state: compare `engine.revision` with the `revision` of the last snapshot that was stored successfully ([15 §1](./15-cookbook.md#1-autosave-and-drafts)). The engine doesn't track saves, because only the host knows whether one succeeded. Any commit that changes `current`, `rows` or `stash` bumps it (including undo, reset, reload and restore), so a label may say "unsaved" when the values happen to match the draft again; saving again is harmless.
+- **Dirty vs. draft status are different things.** Field indicators show "changed from defaults / saved data" and survive any number of draft saves. "Changed since the last draft save" is host state: compare `engine.revision` with the `revision` of the last snapshot that was stored successfully ([16 §1](./16-cookbook.md#1-autosave-and-drafts)). The engine doesn't track saves, because only the host knows whether one succeeded. Any commit that changes `current`, `rows` or `stash` bumps it (including undo, reset, reload and restore), so a label may say "unsaved" when the values happen to match the draft again; saving again is harmless.
 - **Submitting** still uses `serialize()`. After a successful submit, the host deletes the draft.
 - A snapshot contains user data. Where and how it's stored (and encrypted) is the host's choice.
 - Snapshots also cover crash recovery, moving an in-progress form between tabs or devices, and test fixtures.
@@ -317,7 +317,7 @@ savedRevision = engine.revision.get();     // the restored state is what's store
 The engine runs on the server, renders once, and the client continues from the exported state instead of loading again.
 
 ```ts
-// server; contract = (await loadContract(json, { registry })).schema, checked ok (17 §1)
+// server; contract = (await loadContract(json, { registry })).schema, checked ok (18 §1)
 const engine = createFormEngine({ contract, registry, params });
 await engine.ready;                              // loads, dynamic sub-schemas, mounted option fetches
 const html = render(engine);
@@ -338,29 +338,28 @@ interface EngineState {
   rows: Record<DataPath, RowKey[]>;
   meta: { touched: RowKeyPath[]; visited: RowKeyPath[]; conflict: Record<DataPath, Conflict>; stash?: Json };
   notices?: Record<RowKeyPath, Notice[]>;    // external and settled async messages only
-  options: Record<string, Json>;                 // option cache entries by cache key (07 §3)
-  subSchemas: Record<DataPath, { discriminator: Json; hash: string; nodes?: InputNode[] }>;   // loaded dynamic sub-schemas (07 §5)
-  localeBundles?: Record<LocaleTag, LocaleBundle>;   // bundles loaded from the LocaleSource (09 §3.3)
-  plugins?: Record<string, Json>;                // PluginInstance.exportState (02 §8.1)
+  options: Record<string, Json>;                 // option cache entries by cache key (08 §3)
+  subSchemas: Record<DataPath, { discriminator: Json; hash: string; nodes?: InputNode[] }>;   // loaded dynamic sub-schemas (08 §5)
+  localeBundles?: Record<LocaleTag, LocaleBundle>;   // bundles loaded from the LocaleSource (10 §3.3)
+  plugins?: Record<string, Json>;                // PluginInstance.exportState (03 §8.1)
 }
 ```
 
 **Resume.** `resume` is untrusted input: its shape is validated first, then `formId` and `contractHash` must match the contract; otherwise `createFormEngine` throws `E_RESUME_MISMATCH` (catch it and start without `resume`). On success:
-- the entity load is skipped, and `layers`, `rows`, `meta` and `revision` are installed as one commit with origin `resume` ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)): no inbound mapping, no effects, no conflict detection, `history: 'clear'`; dirty bits and counts are rebuilt from the layers, and `revision` is set to the exported value;
-- dynamic sub-schemas in `subSchemas` are compiled from their `nodes` instead of calling the `SchemaSource`. They take the same path as fetched ones (the detect size check and steps 3–7, the engine's `limits`, `allow` and `strict`, node counting; [07 §5](./07-async-data-and-registries.md#5-dynamic-sub-forms)), and the engine recomputes their hash. A sub-schema that fails a check or whose hash doesn't match is dropped and fetched again (`W_RESUME_SCHEMA_REJECTED`); the rest of the form still resumes; entries exported with `exportState({ subSchemas: 'ref' })` carry no `nodes` and are fetched again, and fetched nodes whose `hash` differs are used but logged with `W_RESUME_SCHEMA_CHANGED`;
+- the entity load is skipped, and `layers`, `rows`, `meta` and `revision` are installed as one commit with origin `resume` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): no inbound mapping, no effects, no conflict detection, `history: 'clear'`; dirty bits and counts are rebuilt from the layers, and `revision` is set to the exported value;
+- dynamic sub-schemas in `subSchemas` are compiled from their `nodes` instead of calling the `SchemaSource`. They take the same path as fetched ones (the detect size check and steps 3–7, the engine's `limits`, `allow` and `strict`, node counting; [08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)), and the engine recomputes their hash. A sub-schema that fails a check or whose hash doesn't match is dropped and fetched again (`W_RESUME_SCHEMA_REJECTED`); the rest of the form still resumes; entries exported with `exportState({ subSchemas: 'ref' })` carry no `nodes` and are fetched again, and fetched nodes whose `hash` differs are used but logged with `W_RESUME_SCHEMA_CHANGED`;
 - option fetches whose cache entry is included are skipped; the rest run as usual;
-- the engine starts in the exported `locale`, even if `i18n.locale` differs, so the first render matches the server; if it differs, `setLocale(i18n.locale)` runs automatically after `ready` (the normal atomic switch, [09 §3.3](./09-localization.md#33-loading-bundles-separately)). Pick the locale on the server (cookie, header) to avoid the brief switch;
-- `localeBundles` are installed before the first render (runtime checks from [09 §3.4](./09-localization.md#34-rules) run as on arrival), so the `LocaleSource` isn't called for those tags and the first client render shows the same text as the server;
+- the engine starts in the exported `locale`, even if `i18n.locale` differs, so the first render matches the server; if it differs, `setLocale(i18n.locale)` runs automatically after `ready` (the normal atomic switch, [10 §3.3](./10-localization.md#33-loading-bundles-separately)). Pick the locale on the server (cookie, header) to avoid the brief switch;
+- `localeBundles` are installed before the first render (runtime checks from [10 §3.4](./10-localization.md#34-rules) run as on arrival), so the `LocaleSource` isn't called for those tags and the first client render shows the same text as the server;
 - sync validation runs again (cheap, and it doesn't trust the payload); async validation is not rerun and the exported messages stand until the next trigger, but fields with async rules are marked *unvalidated* (not valid), so `submit()` runs them;
-- plugin state: after the core commit, each plugin's `resumeState(state.plugins[name])` runs in plugin order, before `ready`. A key with no installed plugin is ignored with `W_RESUME_PLUGIN_UNKNOWN` (dev); an installed plugin with no key, or whose `resumeState` rejects its input, starts from its default state ([02 §8.1](./02-state-model.md#81-plugin-api));
+- plugin state: after the core commit, each plugin's `resumeState(state.plugins[name])` runs in plugin order, before `ready`. A key with no installed plugin is ignored with `W_RESUME_PLUGIN_UNKNOWN` (dev); an installed plugin with no key, or whose `resumeState` rejects its input, starts from its default state ([03 §8.1](./03-state-model.md#81-plugin-api));
 - `ready` resolves once the remaining sub-schemas are in.
 
-Server output and the client's first render must match: element ids are derived from row keys ([10 §8](./10-rendering-and-adapters.md#8-accessibility)), and `rows` carries the keys over.
+Server output and the client's first render must match: element ids are derived from row keys ([11 §8](./11-rendering-and-adapters.md#8-accessibility)), and `rows` carries the keys over.
 
 **Server-safe mode** (automatic when there is no `window`, or `createFormEngine({ server: true })`):
 - no timers: debounce is disabled and async validation isn't started;
 - asset stores and `applyExternal` aren't used; `submit()` rejects with `E_SERVER_UNSUPPORTED`;
 - `engine.ready` resolves after loads, sub-schemas and option fetches for fields read during setup; `dispose()` after rendering.
 
-Adapters render from the same snapshot on both sides (`getServerSnapshot`, [10 §3](./10-rendering-and-adapters.md#3-framework-bindings)).
-
+Adapters render from the same snapshot on both sides (`getServerSnapshot`, [11 §3](./11-rendering-and-adapters.md#3-framework-bindings)).

@@ -1,16 +1,16 @@
-# 15 · Cookbook
+# 16 · Cookbook
 
 [← Index](./README.md)
 
-Patterns built only from core primitives. Several have a macro shortcut in `@formgraph/macros` ([14 §7](./14-macros.md#7-standard-library-formgraphmacros-optional)). The long form here is what the macro expands to.
+Patterns built only from core primitives. Several have a macro shortcut in `@formgraph/macros` ([15 §7](./15-macros.md#7-standard-library-formgraphmacros-optional)). The long form here is what the macro expands to.
 
 ## 1. Autosave and drafts
 
-Drafts save a **snapshot** (the user's edits plus what they were based on), not the submit payload, so reopening shows the same values **and** the same change indicators ([08 §8](./08-loading-and-submission.md#8-snapshots-drafts)):
+Drafts save a **snapshot** (the user's edits plus what they were based on), not the submit payload, so reopening shows the same values **and** the same change indicators ([09 §8](./09-loading-and-submission.md#8-snapshots-drafts)):
 
 ```ts
 // open
-const engine = await createFormEngineFrom(contractJson, { registry });   // load + create (17 §2)
+const engine = await createFormEngineFrom(contractJson, { registry });   // load + create (18 §2)
 const draft = await drafts.get(formKey);
 if (draft) {
   const { conflicts } = await engine.restore(draft);
@@ -42,7 +42,7 @@ engine.revision.subscribe((rev) => {
 if ((await engine.submit()).ok) await drafts.delete(formKey);
 ```
 
-`revision` (core, [02 §7](./02-state-model.md#7-engine-write-api-core)) bumps on any commit that changes `current`, `rows` or `stash`, whatever its origin (user edits, host writes, effects, undo, reset, reload), because all of them change what the draft must contain. `savedRevision` only moves when a `put` succeeds, so a failed save leaves the form marked unsaved. The save status lives in host state. A step-based draft saves after `if ((await wiz.next()).ok)` instead ([10 §5](./10-rendering-and-adapters.md#5-wizards)).
+`revision` (core, [03 §7](./03-state-model.md#7-engine-write-api-core)) bumps on any commit that changes `current`, `rows` or `stash`, whatever its origin (user edits, host writes, effects, undo, reset, reload), because all of them change what the draft must contain. `savedRevision` only moves when a `put` succeeds, so a failed save leaves the form marked unsaved. The save status lives in host state. A step-based draft saves after `if ((await wiz.next()).ok)` instead ([11 §5](./11-rendering-and-adapters.md#5-wizards)).
 
 ## 2. Form-level variables
 
@@ -80,9 +80,9 @@ Macro: `choice-with-other`.
       { ">": [{ "count": { "var": "./allergies" } }, 1] }] } } }] }
 ```
 
-`count` is one of the built-in aggregate functions ([04 §2](./04-expressions.md#2-evaluator-registry)).
+`count` is one of the built-in aggregate functions ([05 §2](./05-expressions.md#2-evaluator-registry)).
 
-Picking "None" alongside other values collapses the selection to `["none"]`. To do the reverse (picking another value drops "None"), use a second effect that removes it. An effect may target its own field. Such effects are exempt from the compile-time cycle check, but limited by `limits.effectDepth` ([03 §6](./03-paths-and-dependency-graph.md#6-scheduler), [03 §5.2](./03-paths-and-dependency-graph.md#52-cycle-detection)). Macro: `multi-choice-with-none`.
+Picking "None" alongside other values collapses the selection to `["none"]`. To do the reverse (picking another value drops "None"), use a second effect that removes it. An effect may target its own field. Such effects are exempt from the compile-time cycle check, but limited by `limits.effectDepth` ([04 §6](./04-paths-and-dependency-graph.md#6-scheduler), [04 §5.2](./04-paths-and-dependency-graph.md#52-cycle-detection)). Macro: `multi-choice-with-none`.
 
 ## 5. Carry-forward options
 
@@ -96,7 +96,7 @@ The `items` are the same as `./interests`. Repeating the list is the authoring c
 
 ## 6. Reset a field when another changes
 
-This is an effect on the **source** field ([06 §2](./06-effects-and-computed.md#2-write-origins-and-effect-triggers)):
+This is an effect on the **source** field ([07 §2](./07-effects-and-computed.md#2-write-origins-and-effect-triggers)):
 
 ```json
 { "id": "plan", "kind": "field", "fieldType": "choice",
@@ -143,7 +143,7 @@ How read-only fields look (plain text, formatted values) is up to the renderer.
 
 ## 9. One page, steps, or one question at a time
 
-This is purely a rendering choice. Register different group renderers by platform or mode using ranked testers ([10 §4.1](./10-rendering-and-adapters.md#41-ranked-testers)), for example rendering `step: true` groups as plain sections when `ctx.platform === 'desktop-single-page'`.
+This is purely a rendering choice. Register different group renderers by platform or mode using ranked testers ([11 §4.1](./11-rendering-and-adapters.md#41-ranked-testers)), for example rendering `step: true` groups as plain sections when `ctx.platform === 'desktop-single-page'`.
 
 ## 10. Delayed error display, debounced effects, tabs, row labels
 
@@ -168,19 +168,19 @@ Put contracts together **before** loading (in the CMS, a build step, or the host
 ## 13. Fields that aren't submitted
 
 - Hidden helper fields: `whenHidden: 'exclude'` (see §2).
-- Visible but not submitted (for example "confirm email"): remove it in the outbound transformer (`submission.transformerId`, [08 §1](./08-loading-and-submission.md#1-config)).
+- Visible but not submitted (for example "confirm email"): remove it in the outbound transformer (`submission.transformerId`, [09 §1](./09-loading-and-submission.md#1-config)).
 
 ## 14. Submit while invalid
 
-Skip `submit()`: `await target(engine.serialize({ validate: false }))`. Or mark rules `severity: 'warning'` with the `warnings` gate set to `allow` (the default, `submission.gates`) so they don't block ([05 §7](./05-validation.md#7-severity)).
+Skip `submit()`: `await target(engine.serialize({ validate: false }))`. Or mark rules `severity: 'warning'` with the `warnings` gate set to `allow` (the default, `submission.gates`) so they don't block ([06 §7](./06-validation.md#7-severity)).
 
 ## 15. Externally derived inputs via `setContext`
 
-For values that have to come from outside the form (an API, storage, a device) and depend on form values. The engine stays synchronous: the host loads it, then pushes the result into `context` ([04 §5.2](./04-expressions.md#52-async-data-where-it-goes-instead)).
+For values that have to come from outside the form (an API, storage, a device) and depend on form values. The engine stays synchronous: the host loads it, then pushes the result into `context` ([05 §5.2](./05-expressions.md#52-async-data-where-it-goes-instead)).
 
 ```ts
 let call: AbortController | null = null;
-const country = engine.field('/country').value;          // Readable (10 §2)
+const country = engine.field('/country').value;          // Readable (11 §2)
 const onCountry = async (country: Json) => {
   call?.abort();                                          // cancel the previous request
   call = new AbortController();
@@ -212,7 +212,7 @@ Guard everything that depends on it, so "unknown" is visible rather than wrong:
 Notes:
 - `Readable.subscribe` fires on any value change, including loading and reset, so this works in edit mode. It doesn't fire for the initial value, hence the explicit first call.
 - `context` changes start a normal tick. They never dirty the form and are never submitted. If a submitted value has to wait for the result, guard `submit()` in the host, or add an `expr` validation on the dependent field that fails while `$context.fx` is `null`.
-- `engine.signal` is aborted by `dispose()`, and writes to a disposed engine are no-ops, so a late response is harmless ([17 §3](./17-api-reference.md#3-formengine-core)).
+- `engine.signal` is aborted by `dispose()`, and writes to a disposed engine are no-ops, so a late response is harmless ([18 §3](./18-api-reference.md#3-formengine-core)).
 
 ## 16. Postcode → city autofill
 
@@ -225,11 +225,11 @@ Model the city as a select whose options come from the postcode. A single match 
   "autoSelectSingle": true }
 ```
 
-This gets cancellation, out-of-order handling, validity checks, and "loading saved data doesn't clear it" from [12](./12-option-sources-and-cascading.md). If the postcode maps to several cities, the user picks one. If it maps to none, the list is empty, and `in-options` / `required` report it. Have the query transformer return `null` while the postcode is too short. That skips the request ([07 §2](./07-async-data-and-registries.md#2-provider-options)) and avoids lookups on partial input.
+This gets cancellation, out-of-order handling, validity checks, and "loading saved data doesn't clear it" from [13](./13-option-sources-and-cascading.md). If the postcode maps to several cities, the user picks one. If it maps to none, the list is empty, and `in-options` / `required` report it. Have the query transformer return `null` while the postcode is too short. That skips the request ([08 §2](./08-async-data-and-registries.md#2-provider-options)) and avoids lookups on partial input.
 
 ## 17. Row-level diffs for patch submissions
 
-`patch` mode sends changed arrays whole ([08 §4](./08-loading-and-submission.md#4-submission-pipeline)). If the submit target wants row operations, compute them in the outbound transformer. You need a row identity field (the same one used for `identityKey`, [03 §4](./03-paths-and-dependency-graph.md#4-array-row-identity)):
+`patch` mode sends changed arrays whole ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). If the submit target wants row operations, compute them in the outbound transformer. You need a row identity field (the same one used for `identityKey`, [04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity)):
 
 ```ts
 import { dequal as deepEqual } from 'dequal';
@@ -250,13 +250,13 @@ registry.outboundTransformers.register('orders.patch', ({ payload, mode, loaded,
 });
 ```
 
-**Two shapes.** `payload` is the wire shape (after `serializeAs` and hidden/excluded fields are dropped, [08 §4](./08-loading-and-submission.md#4-submission-pipeline)); `values` and `loaded` are the form shape. This version is safe when `lines` has no `serializeAs` and its rows have no excluded fields. Otherwise read the rows from `payload.lines` and map the `loaded` rows the same way before comparing, or a row can look changed because of a field that is never sent.
+**Two shapes.** `payload` is the wire shape (after `serializeAs` and hidden/excluded fields are dropped, [09 §4](./09-loading-and-submission.md#4-submission-pipeline)); `values` and `loaded` are the form shape. This version is safe when `lines` has no `serializeAs` and its rows have no excluded fields. Otherwise read the rows from `payload.lines` and map the `loaded` rows the same way before comparing, or a row can look changed because of a field that is never sent.
 
 The target's contract for this shape is yours to define. The engine stays out of it.
 
 ## 18. Order totals
 
-Use the built-in `count`/`sum` operators ([04 §2](./04-expressions.md#2-evaluator-registry)) and combine them with ordinary expressions:
+Use the built-in `count`/`sum` operators ([05 §2](./05-expressions.md#2-evaluator-registry)) and combine them with ordinary expressions:
 
 ```json
 { "kind": "field", "id": "lineCount", "fieldType": "number", "computed": { "expr": { "lang": "json-logic", "expr": { "count": { "var": "/items" } } } } },
@@ -265,7 +265,7 @@ Use the built-in `count`/`sum` operators ([04 §2](./04-expressions.md#2-evaluat
   "computed": { "expr": { "lang": "json-logic", "expr": { "*": [{ "var": "/subtotal" }, { "+": [1, { "var": "$context.taxRate" }] }] } } } }
 ```
 
-`amount` itself is a per-row computed (`qty * price`), so a keystroke in one row costs one row computation plus O(rows) for `subtotal` ([06 §3.2](./06-effects-and-computed.md#32-aggregates)).
+`amount` itself is a per-row computed (`qty * price`), so a keystroke in one row costs one row computation plus O(rows) for `subtotal` ([07 §3.2](./07-effects-and-computed.md#32-aggregates)).
 
 ## 19. Server-rendered form
 
@@ -276,7 +276,7 @@ await engine.ready;
 const html = renderToString(<FormProvider engine={engine}><FormRenderer renderers={renderers} /></FormProvider>);
 send(html, { state: engine.exportState() });
 
-// client; `contract` is the CompiledSchema loaded once (17 §1)
+// client; `contract` is the CompiledSchema loaded once (18 §1)
 const app = (engine) => <FormProvider engine={engine}><FormRenderer renderers={renderers} /></FormProvider>;
 try {
   const engine = createFormEngine({ contract, registry, params, resume: window.__FORM_STATE__ });
@@ -290,11 +290,11 @@ try {
 }
 ```
 
-Same element ids on both sides come from row keys ([10 §8](./10-rendering-and-adapters.md#8-accessibility)); option lists, dynamic sub-schemas and locale bundles (`localeBundles`) aren't fetched again ([08 §9](./08-loading-and-submission.md#9-server-rendering)). Choose the locale on the server (cookie or `Accept-Language`): a client asking for another locale first renders the server's, then switches after `ready`.
+Same element ids on both sides come from row keys ([11 §8](./11-rendering-and-adapters.md#8-accessibility)); option lists, dynamic sub-schemas and locale bundles (`localeBundles`) aren't fetched again ([09 §9](./09-loading-and-submission.md#9-server-rendering)). Choose the locale on the server (cookie or `Accept-Language`): a client asking for another locale first renders the server's, then switches after `ready`.
 
 ## 20. Slim bundle
 
-Size-sensitive apps that don't need undo, drafts or wizards import the core entry and opt in per feature ([02 §8](./02-state-model.md#8-plugins)):
+Size-sensitive apps that don't need undo, drafts or wizards import the core entry and opt in per feature ([03 §8](./03-state-model.md#8-plugins)):
 
 ```ts
 import { createFormEngine, createRegistry } from '@formgraph/engine/core';
@@ -309,14 +309,14 @@ function autosave(e: DraftEngine) { save(e.snapshot()); }
 
 ## 21. Custom control with a structured value
 
-Wrapping a third-party control (here, an editable grid) whose value is an object, which has its own validation and its own async work. Uses [01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions) and [10 §2.2](./10-rendering-and-adapters.md#22-component-reported-messages-and-busy-state).
+Wrapping a third-party control (here, an editable grid) whose value is an object, which has its own validation and its own async work. Uses [01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions) and [11 §2.2](./11-rendering-and-adapters.md#22-component-reported-messages-and-busy-state).
 
 **1. Declare the type.** This tells the engine what the value looks like, what "empty" and "equal" mean, and how it's exported:
 
 ```ts
 type GridValue = { columns: string[]; rows: Array<Record<string, number | string | null>> };
 
-const registry = createRegistry({ parent: coreRegistry }).fieldType('x-grid', {   // typed: contracts see x-grid (20 §1)
+const registry = createRegistry({ parent: coreRegistry }).fieldType('x-grid', {   // typed: contracts see x-grid (21 §1)
   value:  v.object({ columns: v.array(v.string()), rows: v.array(v.record(v.string(), v.nullable(v.union([v.number(), v.string()])))) }),
   config: v.object({ maxRows: v.optional(v.number()) }),
   ui:     v.object({ dense: v.optional(v.boolean()) }),
@@ -366,7 +366,7 @@ defineRenderers({ field: { 'x-grid': Grid } });
 ```
 
 What you get:
-- **Messages from three places, one list.** Engine rules (`grid-qty-positive`), the grid's own checks (`report`), and server errors such as `{ path: '/lines/rows/3/qty' }` (mapped to `subPath` `/rows/3/qty`, [08 §5](./08-loading-and-submission.md#5-external-error-mapping)) all land in `feedback`. Severity, submit blocking, `firstInvalid`, and `showFeedback` timing work the same for all of them. A generic renderer that ignores `subPath` still shows them at the field.
+- **Messages from three places, one list.** Engine rules (`grid-qty-positive`), the grid's own checks (`report`), and server errors such as `{ path: '/lines/rows/3/qty' }` (mapped to `subPath` `/rows/3/qty`, [09 §5](./09-loading-and-submission.md#5-external-error-mapping)) all land in `feedback`. Severity, submit blocking, `firstInvalid`, and `showFeedback` timing work the same for all of them. A generic renderer that ignores `subPath` still shows them at the field.
 - **Busy gate.** Submit waits while `recalc` is busy, or returns `reason: 'validating'` without `awaitAsync`.
 - **Dirty, undo, drafts, submit.** These work on the whole value. Dirty uses `deepEqual`, or `equals` if you define it.
 - **Lifecycle.** `report` messages persist until the grid replaces them (the engine doesn't guess when they're stale), and they and busy tokens are dropped when the field is removed. They aren't saved in drafts, so the grid should re-validate on mount.
@@ -375,9 +375,9 @@ What you get:
 
 ## 22. Another engine as a custom field
 
-Embedding a whole, separately owned form (another formgraph contract, or a foreign form engine) as one field of the parent. It builds on §21: the child's output is the field's structured value, and its messages, busy state, and validation are bridged through the controller ([10 §2.2](./10-rendering-and-adapters.md#22-component-reported-messages-and-busy-state)).
+Embedding a whole, separately owned form (another formgraph contract, or a foreign form engine) as one field of the parent. It builds on §21: the child's output is the field's structured value, and its messages, busy state, and validation are bridged through the controller ([11 §2.2](./11-rendering-and-adapters.md#22-component-reported-messages-and-busy-state)).
 
-**First, check whether you need a separate engine.** If the child is a formgraph contract and should behave as part of the parent (cross-field references, one undo history, one dependency graph), use a dynamic sub-form instead ([07 §5](./07-async-data-and-registries.md#5-dynamic-sub-forms)). Use a nested engine when you want **isolation**: a different registry, allow list, or contract version, a form owned by another team, or a different engine entirely. The parent then sees the child only as an opaque value.
+**First, check whether you need a separate engine.** If the child is a formgraph contract and should behave as part of the parent (cross-field references, one undo history, one dependency graph), use a dynamic sub-form instead ([08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)). Use a nested engine when you want **isolation**: a different registry, allow list, or contract version, a form owned by another team, or a different engine entirely. The parent then sees the child only as an opaque value.
 
 **1. The field type.** The value is whatever the child submits:
 
@@ -443,7 +443,7 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
     return () => offs.forEach(off => off());
   }, [child]);
 
-  // 6. Server errors on the parent field (mapped to subPath, 08 §5) go into the child, next to the right input
+  // 6. Server errors on the parent field (mapped to subPath, 09 §5) go into the child, next to the right input
   const { feedback } = useReadable(controller.state);
   useEffect(() => {
     const external = feedback.filter(m => m.source === 'external' && m.subPath);
@@ -478,12 +478,12 @@ Things to know:
 - **Re-seeding resets the child's meta.** A `replace` reload after undo or reset clears the child's touched state. That's usually what you want. If you need to keep it, compute the diff and use `child.applyExternal` instead.
 - **No cross-references.** The parent sees the child's output only as one opaque value. Parent rules and functions can inspect it, but parent paths can't point inside it, and the child can't see the parent except through `context`. If you need more than that, use a dynamic sub-form.
 - **Round-trip.** Bridge 2 seeds the child with what it serialized. That only works if `serializeAs` and outbound transformers in the child contract can be loaded back. Otherwise, store `child.getValues()` instead, and serialize at the parent's submit with an outbound transformer.
-- **Server rendering.** The child is created on the client after mount. For SSR, also render the child on the server and pass its `exportState()` next to the parent's ([15 §19](#19-server-rendered-form)).
+- **Server rendering.** The child is created on the client after mount. For SSR, also render the child on the server and pass its `exportState()` next to the parent's ([16 §19](#19-server-rendered-form)).
 - **Foreign engines.** The same six bridges work for any engine that exposes a value-change event, a validate call that returns located messages, and a busy flag. Map its paths to JSON Pointers for `subPath`.
 
 ## 23. Dirty indicator on every field
 
-Mark changed fields ("●" next to the label) with a revert button, for every field type, without touching each renderer. Uses `dirty` and `revert` on the field controller ([10 §2](./10-rendering-and-adapters.md#2-headless-field-api)) and dirty semantics from [02 §4](./02-state-model.md#4-dirty-semantics).
+Mark changed fields ("●" next to the label) with a revert button, for every field type, without touching each renderer. Uses `dirty` and `revert` on the field controller ([11 §2](./11-rendering-and-adapters.md#2-headless-field-api)) and dirty semantics from [03 §4](./03-state-model.md#4-dirty-semantics).
 
 **1. A wrapper that adds the indicator.** It subscribes only to `dirty`, so it re-renders when the flag flips, not on every keystroke:
 
@@ -491,7 +491,7 @@ Mark changed fields ("●" next to the label) with a revert button, for every fi
 function withDirty<P extends { controller: FieldController<any> }>(Inner: ComponentType<P>) {
   return function Dirty(props: P) {
     const c = props.controller;
-    const dirty = useReadable(useMemo(() => c.select(s => s.dirty), [c]));   // one subscription; O(1) per field (02 §4)
+    const dirty = useReadable(useMemo(() => c.select(s => s.dirty), [c]));   // one subscription; O(1) per field (03 §4)
     return (
       <div className="field" data-dirty={dirty || undefined}>
         <Inner {...props} />
@@ -526,15 +526,15 @@ The renderer prop types are kept, since `withDirty` returns the same props as th
 
 Notes:
 - **What "dirty" means.** It compares with the baseline (loaded value, else default), not with the last keystroke. Typing a value back to the original clears the dot. Custom types compare with their `equals`.
-- **`revert()`** drops the field from `current`, so it shows the baseline again. It's a host write, so it's undoable when history is on ([02 §6.2](./02-state-model.md#62-undo--redo-opt-in)) and effects run as usual.
+- **`revert()`** drops the field from `current`, so it shows the baseline again. It's a host write, so it's undoable when history is on ([03 §6.2](./03-state-model.md#62-undo--redo-opt-in)) and effects run as usual.
 - **Computed fields.** Non-overridable computed fields are never dirty, so they never show the dot. Hide the button for disabled or read-only fields if reverting shouldn't be offered there.
-- **After submit.** If the submit target returns `entity`, the engine reloads with `replace`, which moves the baseline, so the dots clear on their own ([08 §4](./08-loading-and-submission.md#4-submission-pipeline)). Without `entity`, fields stay dirty until you reload.
+- **After submit.** If the submit target returns `entity`, the engine reloads with `replace`, which moves the baseline, so the dots clear on their own ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). Without `entity`, fields stay dirty until you reload.
 - **Accessibility.** Don't rely on the dot alone: give the button a text label, and announce the state with visually hidden text (for example "changed") if it matters to users.
 - **Whole form.** `engine.form.select('dirty')` drives a "You have unsaved changes" banner or a leave-page guard with the same O(1) cost.
 
 ## 24. End-to-end tests
 
-Stable selectors for Playwright, Cypress or Detox, using `testId` ([10 §8.1](./10-rendering-and-adapters.md#81-test-ids)).
+Stable selectors for Playwright, Cypress or Detox, using `testId` ([11 §8.1](./11-rendering-and-adapters.md#81-test-ids)).
 
 **1. Turn it on** (here, everywhere except production):
 
