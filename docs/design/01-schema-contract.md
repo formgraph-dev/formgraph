@@ -132,7 +132,15 @@ export interface CustomField extends FieldBase<`x-${string}`, Json, Record<strin
 export type Field = KnownField | CustomField;
 
 export type ValueOf<FT extends FieldType> = Def<FT>['value'];
+
+/** Strong view for a typed registry's entries, without the open wire envelope. */
+export type FieldFor<E extends Pick<RegistryEntries, 'fieldTypes'>> = {
+  [FT in keyof E['fieldTypes'] & string]:
+    FieldBase<FT, E['fieldTypes'][FT]['value'], E['fieldTypes'][FT]['ui']> & E['fieldTypes'][FT]['config']
+}[keyof E['fieldTypes'] & string];
 ```
+
+`Field` is the permissive wire/runtime union, so an `x-` discriminant alone cannot prove an open field's config types. Use `FieldFor<E>` for registry-checked typed contracts and `KnownField` (or `FieldOf<'x-…'>`) for the declaration-merging fallback. Those strong views exclude `CustomField`; narrowing a merged `x-signature` then retains its `minStrokes?: number`. Do not cast an arbitrary wire field to a strong view based only on its name: the actual registry/config validation must have succeeded, not merely a missing-type fallback.
 
 Narrowing works as usual:
 

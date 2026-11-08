@@ -44,7 +44,7 @@ const offRevision = engine.revision.subscribe((rev) => {
 const result = await engine.submit();
 if (result.ok) {
   if (result.response === 'failed' || result.pendingChanges || engine.revision.get() !== result.savedRevision) {
-    showBanner(result.response === 'failed' ? 'Saved, refresh required.' : 'Saved; newer changes remain.');
+    showBanner(result.response === 'failed' ? 'Saved, refresh required.' : 'Saved; unsent changes remain.');
     debouncedSave();                           // retain editor, subscription and draft for remaining/reconciliation work
   } else {
     stopped = true; again = false;
@@ -58,7 +58,7 @@ if (result.ok) {
 
 `revision` (core, [03 §7](./03-state-model.md#7-engine-write-api-core)) bumps on any commit that changes `current`, `rows` or `stash`, whatever its origin (user edits, host writes, effects, undo, reset, reload), because all of them change what the draft must contain. `savedRevision` only moves when a `put` succeeds, so a failed save leaves the form marked unsaved. The save status lives in host state. A step-based draft saves after `if ((await wiz.next()).ok)` instead ([11 §5](./11-rendering-and-adapters.md#5-wizards)).
 
-Only a reconciled success with no post-snapshot work closes/unmounts the editor. `pendingChanges` covers deferred resolved/default/computed changes as well as current edits; a fresh comparison against `savedRevision` also catches subsequent revision writes. Remaining work keeps the live editor and autosave subscription. A response-application failure likewise keeps the draft for reconciliation; retry reload/refetch, not submit. To deliberately keep editing after a clean save, start a fresh engine/autosave session after draft deletion or use a pause/reattach flow. Do not reuse a disposed instance.
+Only a reconciled success with no unsent work closes/unmounts the editor. `pendingChanges` includes serializer-excluded edits retained from before submit as well as deferred resolved/default/computed changes; a fresh comparison against `savedRevision` catches subsequent revision writes. Remaining work keeps the live editor and autosave subscription. For `response: 'failed'`, retain the result and retry `engine.reconcileSubmit(result.reconciliationId)` (optionally with a refetched entity), not submit or plain preserve-edits reload: reconciliation clears the already-acknowledged snapshot and preserves only excluded/later edits. Recheck its returned pending-work/revision fields before closing. To keep editing after a clean save, start a fresh engine/autosave session after draft deletion or use a pause/reattach flow. Do not reuse a disposed instance.
 
 ## 2. Form-level variables
 
@@ -504,16 +504,19 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
         let reseedGeneration = 0;
         let reseeding = false;
         let reseedTarget: Json = seed;
+        let publishing = false;
         const publishValue = (next: Json) => {
           if (stale()) return;
           if (deepEqual(next, controller.value.get())) { deferredChild = undefined; return; }
           const previous = pushed; pushed = next;     // suppress the echo only for this exact accepted write
+          publishing = true;
           try { controller.setValue(next); deferredChild = undefined; }
           catch (error) {
             pushed = previous;
             if (errorCode(error) === 'E_SUBMIT_BUSY') deferredChild = next;   // after snapshot lock: subsequent edit
             else throw error;
           }
+          finally { publishing = false; }
         };
         const reseed = (v: Json) => {
           const run = async () => {
@@ -548,6 +551,7 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
           }),
           // 2. Value: parent → child, for reset, undo, reload and restore
           controller.value.subscribe((v) => {
+            if (publishing && deepEqual(v, pushed)) return; // our accepted write, even before bridge.child is ready
             const expected = reseeding || bridge.child !== e ? reseedTarget : pushed;
             if (!deepEqual(v, expected)) void reseed(v); // A→B→A supersedes B even though A equals old pushed
           }),
@@ -634,7 +638,7 @@ Things to know:
 - **Re-seeding resets the child's meta.** A `replace` reload after undo or reset clears the child's touched state. That's usually what you want. If you need to keep it, compute the diff and use `child.applyExternal` instead.
 - **Reseed targets and failures.** Compare parent updates with the active target, not only the last published value, so A→B→A supersedes B. Ignore only stale/older generations; a failure of the current generation keeps the child disabled and its validation guard closed until Retry successfully reloads the latest parent value. The revision listener also refuses to publish from a failed/stale child, even if an internal callback runs while its UI is disabled.
 - **No cross-references.** The parent sees the child's output only as one opaque value. Parent rules and functions can inspect it, but parent paths can't point inside it, and the child can't see the parent except through `context`. If you need more than that, use a dynamic sub-form.
-- **Round-trip.** Bridge 2 seeds the child with what it serialized. That only works if `serializeAs` and outbound transformers in the child contract can be loaded back. Otherwise, store `child.getValues()` instead, and serialize at the parent's submit with an outbound transformer.
+- **Round-trip.** Bridge 2 seeds the child with what it serialized. That only works if `serializeAs` and outbound transformers can be loaded back. If excluded/hidden child input must also survive parent reload/undo/drafts, store `child.getValues()` (or its snapshot) instead and serialize at the parent's submit with an outbound transformer. The publishing guard suppresses the initial bridge's own echo; initializing from a payload is not permission to reload it and lose hidden child input.
 - **Server rendering.** The child is created on the client after mount. For SSR, also render the child on the server and pass its `exportState()` next to the parent's ([16 §19](#19-server-rendered-form)).
 - **Foreign engines.** The same six bridges work for any engine that exposes a value-change event, a validate call that returns located messages, and a busy flag. Map its paths to JSON Pointers for `subPath`.
 
@@ -692,7 +696,7 @@ Notes:
 - **`revert()`** restores only the targeted field's baseline. Outside arrays it drops the key from `current`; inside arrays it reconstructs the atomic array with that one field restored by row identity, preserving edits in other rows/cells ([03 §3.2](./03-state-model.md#32-atomic-array-writes)). It's a host write, so it's undoable when history is on ([03 §6.2](./03-state-model.md#62-undo--redo-opt-in)) and effects run as usual.
 - **Stale array identity.** The button catches `E_ROW_BASELINE_UNKNOWN` instead of guessing a row. `errorCode` is the helper from §22; `announce` is the host's accessible status-message helper. Accepting an external whole array or reverting that array restores known identity; accepting local values alone does not.
 - **Computed fields.** Non-overridable computed fields are never dirty, so they never show the dot. Hide the button for disabled or read-only fields if reverting shouldn't be offered there.
-- **After submit.** If the submit target returns `entity`, the engine reloads with `replace`, which moves the baseline, so the dots clear on their own ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). Without `entity`, fields stay dirty until you reload.
+- **After submit.** A returned entity advances the acknowledged baseline; dots clear for acknowledged fields, but retained serializer-excluded/later edits stay present and may remain dirty ([09 §4.2](./09-loading-and-submission.md#42-acknowledgement-and-response-reconciliation)). Without `entity`, fields stay dirty until reconciliation or an explicit reload.
 - **Accessibility.** Don't rely on the dot alone: give the button a text label, and announce the state with visually hidden text (for example "changed") if it matters to users.
 - **Whole form.** `engine.form.select('dirty')` drives a "You have unsaved changes" banner or a leave-page guard with the same O(1) cost.
 

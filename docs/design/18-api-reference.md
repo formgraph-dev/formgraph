@@ -118,6 +118,7 @@ interface FormEngine<V = Json, Paths extends string = string, Payload = Json> { 
   serialize(opts: { mode: 'full' | 'patch'; validate?: boolean }): Payload | PatchOf<Payload>;
   submit(opts?: { confirm?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitResult>;  // 09 §4; first call's controls govern the shared promise
   cancelSubmit(): void;                                        // cancels even non-cooperative work; no-op when idle (09 §4)
+  reconcileSubmit(reconciliationId: string, opts?: { entity?: Json; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitReconciliation>;   // saved response retry, never calls target (09 §4.2)
   confirm(gate: string): void;                                  // 06 §7.3; valid while the gate's notices stay a subset of those confirmed
   unconfirm(gate: string): void;
   mapExternalErrors(errors: ExternalErrors): void;              // 09 §5
@@ -134,7 +135,7 @@ interface FormEngine<V = Json, Paths extends string = string, Payload = Json> { 
 
 type SubmitSuccess =                                           // 09 §4; savedRevision is a local pre-finalization token
   | { ok: true; response: 'applied' | 'none'; savedRevision: number; pendingChanges: boolean }
-  | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[] };
+  | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[]; reconciliationId: string };
 type SubmitResult = SubmitSuccess
   | { ok: false; reason: 'load' | 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
@@ -143,6 +144,7 @@ type SubmitResult = SubmitSuccess
   | { ok: false; reason: `x-${string}`; notices?: NoticeInput[] };   // plugin before-hook stop
 
 type ReloadPolicy = 'preserve-edits' | 'replace-unchanged' | 'replace';   // 09 §3
+interface SubmitReconciliation { savedRevision: number; pendingChanges: boolean }   // 09 §4.2
 type PatchOf<T> = T extends readonly unknown[] ? T : T extends object ? { [K in keyof T]?: PatchOf<T[K]> } : T;
 ```
 

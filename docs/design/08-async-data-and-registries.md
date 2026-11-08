@@ -75,7 +75,7 @@ A transformer that throws fails the operation that owns it, writes nothing and n
 | inbound | the load fails: `ready` or `reload()` rejects, `loaded` unchanged |
 | outbound | `submit()` returns `{ ok: false, reason: 'transform' }`, the target isn't called |
 
-An inbound failure while applying an **accepted submit response** is different from a failed save: the response plan is discarded, `E_SUBMIT_RESPONSE` is reported, and submit returns `ok: true, response: 'failed'` with diagnostics ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). The host retries mapping/reload/refetch, not the already-accepted target call.
+An inbound failure while applying an **accepted submit response** is different from a failed save: the response plan is discarded, `E_SUBMIT_RESPONSE` is reported, and submit returns `ok: true, response: 'failed'` with diagnostics and a reconciliation id ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). The host retries `reconcileSubmit` (optionally with a refetched entity), not a generic preserve-edits reload or the already-accepted target call.
 
 `QueryTransformer` and `ResultTransformer` are in §2. The four transformer registries stay separate so each kind's signature can change independently and their ids don't share a namespace.
 

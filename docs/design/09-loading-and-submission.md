@@ -71,7 +71,7 @@ With every policy, row keys of replaced arrays are matched by `identityKey` and 
 
 A `reload` or `restore` call that starts while an earlier one is still pending supersedes it: the earlier call rejects with `E_SUPERSEDED` and writes nothing (latest wins).
 
-After a successful submit, the engine reloads with the target's response (if it returns one) using `replace`, regardless of `reloadPolicy`, which resets dirty state.
+After a successful submit, a returned entity advances the baseline through acknowledgement-aware replacement (§4.2), not the host's `reloadPolicy`: acknowledged overrides clear, while excluded and later edits survive. Ordinary explicit `reload({ policy: 'replace' })` still follows the table above and is an explicit discard operation.
 
 ## 4. Submission pipeline
 
@@ -100,19 +100,20 @@ engine.submit():                  // submit({ confirm?: string[]; signal?: Abort
   acquire edit lock and capture the settled state atomically, rechecking its version; if changed → repeat preflight
   plugin 'before' hooks (§4.1)                                  → fail(hook's reason)
   payload = serialize()                   // outbound transformer throws → fail('transform') (08 §1.1)
+  retain frozen acknowledgement checkpoint + serializer coverage + excluded current overrides (§4.2)
   result  = await submitTargets[targetId]({ payload, mode, confirmed }, ctx)   // AsyncSource, 08 §1.1
             // throw/reject → lastSubmitError = error; fail('target')
   if (result.errors?.length ?? 0) > 0 → map external errors (§5) → fail('external')
   targetAccepted = true
   response = 'none'
   if Object.prototype.hasOwnProperty.call(result, 'entity'):
-    stage and atomically apply reload({ entity: result.entity, policy: 'replace' })
-      // failure/cancellation/deadline here → response='failed', retain old state, record E_SUBMIT_RESPONSE; do not call target again
+    stage acknowledgement replacement; reapply excluded edits by stable identity; atomically commit (§4.2)
+      // failure/cancellation/deadline → response='failed'; retain checkpoint/state; responseDiagnostics={diagnostics,reconciliationId}; record E_SUBMIT_RESPONSE
     if applied: response = 'applied'
   savedRevision = engine.revision.get()   // after response application, BEFORE deferred/listener changes
   savedVersion = value/eligibility version
   finalize('submitted')        // unlock + drain queued updates + phase change; notify only after all are complete
-  pendingChanges = value/eligibility version changed since savedVersion OR engine.revision.get() !== savedRevision
+  pendingChanges = retained unacknowledged edits exist OR value/eligibility version changed since savedVersion OR engine.revision.get() !== savedRevision
   return {ok:true, response, savedRevision, pendingChanges, ...responseDiagnostics}
 
 fail(reason, extra?):
@@ -124,7 +125,7 @@ fail(reason, extra?):
 ```ts
 type SubmitSuccess =
   | { ok: true; response: 'applied' | 'none'; savedRevision: number; pendingChanges: boolean }
-  | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[] };
+  | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[]; reconciliationId: string };
 type SubmitResult = SubmitSuccess
   | { ok: false; reason: 'load' | 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
@@ -145,9 +146,9 @@ Before the target is invoked, cancellation `outcome` is `'not-sent'`; while its 
 
 **Target failure.** A thrown/rejected target records the original error in `FormState.lastSubmitError` and reports a runtime `E_SUBMIT_TARGET`. It returns `{ ok: false, reason: 'target' }`, keeps local edits, restores `ready`, unlocks, drains external/deferred updates, then runs failure hooks and `onSubmitFailed`, in that order. The host may offer retry; the engine never automatically retries a potentially non-idempotent target. All other failure branches also drain the queue. Success still applies any response entity first, then unlocks and drains before success observers. Finalization is shared so cleanup cannot be skipped by a failure branch.
 
-**Saved, but response not applied.** `entity` is tested by own-property presence, so `null`, `false`, `0` and `''` all run the inbound pipeline (a present `undefined` is not JSON and is an invalid response, not an omitted entity). After a no-errors target response, stage mapping, schema loads and the replacement off-store. Any mapping/load/compile failure (including cancellation/deadline during this stage) discards that plan, preserves the old baseline/current edits and reports `E_SUBMIT_RESPONSE` with the underlying diagnostics in `lastSubmitError`. Finalize/unlock/drain normally, set `phase: 'submitted'`, dispatch success observers and return `{ ok: true, response: 'failed', savedRevision, pendingChanges, diagnostics }`; do not call `onSubmitFailed` or run the save target again. The host shows “Saved, refresh required” and retries **only** `reload({ entity: retainedResponse.entity, policy: 'preserve-edits' })`, or refetches the entity source, after fixing the local failure. The target integration should retain its raw response when it wants that retry path. `response: 'none'` means no entity was returned; `applied` means its replacement committed.
+**Saved, but response not applied.** `entity` is tested by own-property presence, so `null`, `false`, `0` and `''` all run the inbound pipeline (a present `undefined` is not JSON and is an invalid response, not an omitted entity). After a no-errors target response, stage mapping, schema loads, acknowledgement replacement and retained-edit replay off-store (§4.2). Any failure/interruption discards the plan, preserves live state, reports `E_SUBMIT_RESPONSE` and retains the checkpoint/raw response. Finalize/unlock/drain normally, set `phase: 'submitted'`, dispatch success observers and return `ok: true, response: 'failed'` with diagnostics and an engine-scoped `reconciliationId`; do not call `onSubmitFailed` or the save target again. The host shows “Saved, refresh required” and retries `reconcileSubmit(reconciliationId)` after fixing the local failure, optionally passing a refetched raw entity. Plain `reload({ policy: 'preserve-edits' })` is **not** acknowledgement reconciliation: it would mistake the already-submitted current layer for newer unsaved edits. `response: 'none'` means no entity was returned; `applied` means the acknowledgement committed with unacknowledged edits preserved.
 
-**Edits beyond the saved snapshot.** Every success returns `savedRevision`: the local engine revision after its internal response-application commit (or unchanged state when none/failed), **before** deferred work, phase listeners and success observers can write. It also returns `pendingChanges`, computed after synchronous finalization/listener/observer work: true if either that revision or the engine's submission value/eligibility version changed after the acknowledged state. The latter catches deferred defaults/computed/context changes even when they do not write `current` and therefore do not bump `revision`. It may conservatively retain externally changed work; it must not omit an unsubmitted resolved-value change. Finalization drains synchronous listener ticks before resolving submit. Retain the editor/draft if `pendingChanges` is true **or** a fresh `engine.revision.get()` comparison differs from the token. This is not a backend revision or a promise about future writes. A failed response application always needs reconciliation even when neither counter changed.
+**Unacknowledged work.** Every success returns `savedRevision`: the local engine revision after its internal acknowledgement commit (or unchanged state when none/failed), before deferred work and listeners can write. `pendingChanges` is computed after synchronous finalization/listener/observer work: true if retained serializer-excluded edits exist, or either revision or submission value/eligibility version changed after the acknowledged state. Thus it covers both pre-existing unsent edits and deferred defaults/computed/context changes that do not bump `revision`. It may conservatively retain externally changed work; it must not omit an unsubmitted change. Finalization drains synchronous listener ticks before resolving submit. Retain the editor/draft if `pendingChanges` is true **or** a fresh revision comparison differs from the token. This is not a backend revision or a promise about future writes. Failed response application always requires reconciliation even when neither counter changed.
 
 `finalize` releases the lock and drains queued updates before publishing the final phase, in one notification boundary. A phase subscriber that sees `ready`/`submitted` may write immediately; it must not observe a still-held lock or a baseline that has not yet drained. Such listener writes form a subsequent tick, not part of the frozen submitted payload.
 
@@ -167,6 +168,23 @@ type SubmitHook = (e: { mode: SubmitMode; confirmed: string[]; result?: SubmitRe
 - Hooks run in plugin order. A thrown hook is reported through `onDiagnostic` and doesn't change the result, except that a throwing `before` stops the submit with `reason: 'x-<plugin>'`.
 
 `onSubmitFailed` runs for **every** `{ ok: false }` result; the adapters' default branches on `reason` ([11 §8](./11-rendering-and-adapters.md#8-accessibility)).
+
+#### 4.2 Acknowledgement and response reconciliation
+
+The frozen submission checkpoint contains the resolved values, current overrides, row identities and **serializer coverage** before outbound transformation: which fields were actually included under their effective hidden/disabled policies. An omitted field's current override is not acknowledged merely because the target accepted other fields. Coverage describes engine serialization; an opaque transformer/target owns any additional application-specific omission semantics and must handle them conservatively rather than assume omitted values were saved.
+
+**Retain excluded edits.** With no response entity, excluded overrides stay in `current` and force `pendingChanges: true`. With an entity, first stage the new baseline and clear only acknowledged overrides, then overlay the excluded edits before the atomic acknowledgement commit. Stashes and their unsent current overrides likewise survive; a response does not implicitly discard inactive-branch edits. Match array cells by stable identity/`identityKey`, not current index; arrays remain atomic in storage. If safe correspondence is unavailable, keep the whole local array as an explicit conflict against the acknowledged baseline and retain unresolved row provenance rather than discard edits or guess cell positions. Excluded fields that disappear from the acknowledged schema make the replay plan fail closed (`response: 'failed'`); they are not silently dropped. Retained edits remain present (dirty when unequal to baseline) and included in drafts, and unsent overrides/stash edits force `pendingChanges` even if revision/equality did not change. The host can explicitly revert/discard them or keep the draft; a clean save of other fields is not an implicit discard instruction.
+
+**Retry against the submitted checkpoint, not the old loaded layer.** For a failed response application, core retains one pending acknowledgement checkpoint, its raw response, and a coalesced map of accepted post-capture edit intents (including reverts and array structure/row identities). This is bounded pending-operation state, not a retained commit log. A reconciliation attempt stages the new baseline, removes the **captured acknowledged** overrides, then replays only excluded overrides and later edit intents against that new baseline. Reverts follow the new baseline. Latest values/structure are coalesced; ordinary editing can continue while staging, and the final synchronous plan includes the latest intents. A submitted `" Alice "` with acknowledged `"Alice"` and no later edit therefore displays `"Alice"` without a conflict. A later edit to `"Bob"` is preserved over that baseline. Ambiguous schema/row replay fails without partially applying or discarding the local draft.
+
+```ts
+interface SubmitReconciliation { savedRevision: number; pendingChanges: boolean }
+engine.reconcileSubmit(reconciliationId: string, opts?: {
+  entity?: Json; signal?: AbortSignal; timeoutMs?: number;
+}): Promise<SubmitReconciliation>;   // no submit target call; default entity is the retained raw response
+```
+
+The opaque id belongs to this engine's current pending acknowledgement. A newer accepted submit, explicit baseline-changing reload/external update, relevant schema change or disposal invalidates it (`E_RECONCILE_UNAVAILABLE`), preventing an old retry from overwriting newer data. Calls during a submit reject with `E_SUBMIT_BUSY`; overlapping reconciliation calls follow the loader's latest-wins rule (`E_SUPERSEDED` for the older call). Staging shares cancellation/deadline and generation checks; failure/interruption rejects with `E_SUBMIT_RESPONSE` and underlying diagnostics, keeping live state and the still-valid checkpoint for retry. A successful commit consumes the id and returns the same revision/pending-work semantics as submit, including retained excluded edits. IDs/checkpoints are runtime-only, not draft/SSR payloads; after restart, use normal loading and explicit stale-draft conflict handling instead of replaying an expired id.
 
 ### Public building blocks
 

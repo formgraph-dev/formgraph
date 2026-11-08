@@ -155,3 +155,17 @@ declare module '@formgraph/contract' {
 ```
 
 Merged entries are included in every `Registry<E>` type. Prefer typed registration; use this only when the registry's type can't flow to the contract.
+
+For typed access to those merged entries, use the strong `KnownField`/`FieldOf` view, not the open wire `Field` union ([01 §3.2](./01-schema-contract.md#32-field-type-registry)):
+
+```ts
+function describeMerged(field: KnownField) {   // registry/config-validated known field, not arbitrary JSON
+  if (field.fieldType === 'x-signature') {
+    const minStrokes: number | undefined = field.minStrokes;
+    const color: string | undefined = field.ui?.penColor;
+  }
+}
+// Locally registered entries use FieldFor<E>, with E carried by Registry<E>/TypedContract.
+```
+
+The open `CustomField` branch remains necessary at input/schema-source boundaries. It does not weaken these separate strong views, and a name check on raw wire data is not a substitute for validation.
