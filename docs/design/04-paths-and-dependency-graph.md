@@ -67,7 +67,7 @@ Internally, the engine uses absolute data paths and row key paths ([§1](#1-thre
 - `move`/`remove` update both the value array (in `current`) and the key list together in one batch.
 - Errors and meta are keyed by row key path, so reorders don't move errors to the wrong row.
 - Adapters use the `RowKey` as the framework list key.
-- When a whole array value is replaced (for example by reloading), keys are reassigned unless the transformer provides an identity field (`array.identityKey`, such as `"id"`). With an identity field, keys are matched and kept.
+- When a whole array value is replaced (for example by reloading), keys are reassigned unless the array node declares an identity field (`identityKey`, such as `"id"`). With an identity field, keys are matched and kept.
 
 ## 5. Dependency graph
 

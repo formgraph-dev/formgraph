@@ -177,7 +177,7 @@ This is purely a rendering choice. Register different group renderers by platfor
 ## 10. Delayed error display, debounced effects, tabs, row labels
 
 - **Delayed errors:** a timer in the adapter around the `showFeedback` handle.
-- **Debounced effects:** commit text on blur in the renderer, or write a custom `x-` effect handler that debounces.
+- **Debounced effects:** commit text on blur in the renderer, or debounce in host code and write with `engine.setValue(path, value, { origin: 'x-…' })` using a registered custom origin ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). Effect handlers are synchronous and write only inside the tick, so they cannot debounce.
 - **Tabs:** a parent group with `ui: { variant: 'tabs' }` whose child groups are the tabs. Use an `x-` variant plus a registered renderer for custom tab styles.
 - **Row labels:** `label: { "default": "{name}", "params": { "name": { "lang": "json-logic", "expr": { "var": "./name" } } } }` on the row group.
 
@@ -209,13 +209,12 @@ For values that have to come from outside the form (an API, storage, a device) a
 
 ```ts
 let call: AbortController | null = null;
+engine.signal.addEventListener('abort', () => call?.abort());   // once: aborted on engine.dispose(); works on React Native
 const country = engine.field('/country').value;          // Readable (11 §2)
 const onCountry = async (country: Json) => {
   call?.abort();                                          // cancel the previous request
   call = new AbortController();
-  const ctl = call;
-  engine.signal.addEventListener('abort', () => ctl.abort());     // also aborted on engine.dispose(); works on React Native
-  const signal = ctl.signal;
+  const signal = call.signal;
   engine.setContext({ fx: null });                       // explicit "unknown", never a stale rate
   if (country == null) return;
   try {

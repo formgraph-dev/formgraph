@@ -23,6 +23,7 @@ Every write is tagged with an **origin**: a label saying where it came from. Cal
 | `computed` | Computed values |
 | `load` | Loading and reloading ([09 §2](./09-loading-and-submission.md#2-data-load-pipeline), [§3](./09-loading-and-submission.md#3-reload-policy)) |
 | `external` | `engine.applyExternal` ([09 §7](./09-loading-and-submission.md#7-external-updates-and-conflicts)) |
+| `resume` | Installing exported server-rendering state ([09 §9](./09-loading-and-submission.md#9-server-rendering)) |
 | `reset` | `engine.reset()` |
 | `default` | Defaults, including expression defaults |
 | `history` | Undo/redo |
@@ -102,13 +103,13 @@ Rules:
 1. Effects run only for writes whose origin policy has `effects: true` (§2.1), including cascades. Cascade depth is limited by `limits.effectDepth` in the engine options (default 8). Going deeper is `E_EFFECT_DEPTH`: the remaining effects are dropped, and the diagnostic lists the chain of `(source → target)` effects that led there.
 2. Host code can turn them off per call with `{ runEffects: false }`.
 3. So effects **never** run for origins with `effects: false`, such as loading or undo/redo ([03 §6.2](./03-state-model.md#62-undo--redo-opt-in)). This prevents a classic bug (present in the v4 draft) where a clear effect wipes loaded data during load.
-4. Effects only fire when the value actually changes (`!deepEqual(prev, next)`).
+4. `on: 'change'` effects only fire when the value actually changes (`!deepEqual(prev, next)`); `on: 'blur'` effects fire on the blur event without a change test.
 
 Action semantics:
 - `clear`: write the empty value for the field type (`''`, `null`, `[]`, `false`) into `current`.
 - `set`: write the evaluated `value` into `current`.
 - `reset`: write the **default** value into `current`, ignoring loaded.
-- `revert`: delete the key from `current`, falling back to loaded, then default.
+- `revert`: delete the key from `current`, falling back through the normal resolve order ([03 §3](./03-state-model.md#3-precedence-by-presence-not-nullishness): computed for an overridable computed field, then loaded, then default).
 - Arrays are atomic **in storage**, not in command targeting ([03 §3.2](./03-state-model.md#32-atomic-array-writes)). For `items[2].qty`, all four actions clone the resolved array and change only that cell. `reset` uses that field's default in its row scope; `revert` uses its baseline value through the persisted baseline row-key map, not current index. A genuinely new row uses the field's default/empty value; an unresolved old row after a stale-baseline change rejects with `E_ROW_BASELINE_UNKNOWN`. Other cells, rows and row keys stay unchanged. **Keep the enclosing array override**, including after a descendant revert and even when it equals the baseline. Equality never erases explicit `set`/`clear`/`reset` intent. Targeting `items` itself still resets the whole array (an explicit current value) or reverts it (deletes its override).
 - `validate`: schedule validation of the target (respecting "already validated once").
 - `x-*`: a host-registered effect handler. It receives the engine write API with origin `effect`:
@@ -145,7 +146,7 @@ The earlier `initial` mode wrote a pre-filled value into `current`, which made a
 
 - The result is written to the **`default` layer** (origin `default`, so no effects run). The field isn't dirty, because dirty compares against the layers below `current` ([03 §4](./03-state-model.md#4-dirty-semantics)).
 - It is re-evaluated whenever its dependencies change. Because of presence precedence ([03 §3](./03-state-model.md#3-precedence-by-presence-not-nullishness)), that only shows when neither `current` nor `loaded` has the path. So it's a **live default until the user edits or saved data exists**, with no extra bookkeeping.
-- `reset` effects and `engine.reset()` fall back to the current evaluated default.
+- The `reset` effect writes the current evaluated default into `current`. `engine.reset()` instead clears `current`, so values fall back to `loaded`, then this default (`keepLoaded: false` empties `loaded`, so only the default remains).
 
 | Want | Use |
 |------|-----|

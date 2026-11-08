@@ -22,17 +22,19 @@
 ## Roadmap
 
 ### M0: Foundations
-- `packages/contract`: input and normalized types, JSON Schema generation, Standard Schema contract validator, the migration mechanism (no steps yet, [01 §7.2](./01-schema-contract.md#72-migrations)), load pipeline steps 1–4 and 6 ([01 §7.1](./01-schema-contract.md#71-contract-load-pipeline)), and diagnostics ([17](./17-diagnostics.md)). No macros, no `toPayloadSchema`.
+- `packages/contract`: input and normalized types, JSON Schema generation, Standard Schema contract validator, the migration mechanism (no steps yet, [01 §7.2](./01-schema-contract.md#72-migrations)), load pipeline steps 1–4 and 6 ([01 §7.1](./01-schema-contract.md#71-contract-load-pipeline)), and diagnostics ([17](./17-diagnostics.md)). No macros, no `toPayloadSchema`; load step 5 (expand) and its re-normalization land with macros in M3.
 - Path grammar ([04 §2](./04-paths-and-dependency-graph.md#2-path-grammar)), compile to CompiledSchema, `Limits` and `allow` ([01 §7.4](./01-schema-contract.md#74-limits), [05 §4](./05-expressions.md#4-security-model)).
 - Monorepo tooling: pnpm, a library bundler (tsup is unmaintained; evaluate tsdown), Vitest, Changesets, Biome, and a CI bundle-size check against the budgets in the [README](./README.md). Core and contract build with `lib: ["ES2020"]` (no `dom`), a lint rule bans platform globals, and CI runs core tests under Node and Hermes (D24, [11 §6](./11-rendering-and-adapters.md#6-platforms)).
+- Inspection foundations (D30, [22](./22-debugging-and-devtools.md)): protocol identities and DTO schemas, non-materializing read rules, retention/privacy budgets and the internal observation boundary. CI benchmark for disabled probes. No client UI.
 
 ### M1: Vertical slice
 - Value layers with presence precedence, `FormStore` transactions, commit entries and `CommitHooks` ([03 §2.5](./03-state-model.md#25-commit-hooks)), path-indexed `Readable`s, structural sharing. Row keys, array operations, `getValues`, `setValue`, array `set`/`replace`.
-- Read observer (`observeReads`/`untracked`, [03 §2.6](./03-state-model.md#26-tracking-reads-for-framework-adapters)) in the core, plus `engine.batch`. Adapter bridges and the optional `@formgraph/engine/reactive` subpath come with their adapters.
+- Read observer (`observeReads`/`untracked`, [03 §2.6](./03-state-model.md#26-tracking-reads-for-framework-adapters)) in the core and exported through `@formgraph/engine/interop` (D27), plus `engine.batch`. Adapter bridges and the optional `@formgraph/engine/reactive` subpath come with their adapters.
 - `ORIGIN_POLICY` table and origin plumbing on every write, plus the effect loop. Declarative effect actions stay M3 ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)).
 - Plugin host API ([03 §8.1](./03-state-model.md#81-plugin-api)) and the `@formgraph/engine/core` vs default entry split. The default entry equals core until plugins land (`assets` M2, `icu` M3, the rest M4).
+- Typed registry layer: `Registry<E>` with typed registration and `registry.extend`, `defineContract`, `loadContract` overloads and `FormEngineWith` ([21](./21-type-inference.md), D26), with a type-performance benchmark; `formgraph typegen` ([21 §5](./21-type-inference.md#5-limits)) follows in M3.
 - Full `FieldState` type with stubs: text via a passthrough resolver, options empty until M2, computed until M3.
-- DAG, cycle detection, scheduler.
+- DAG, cycle detection, scheduler. Instrument transactions, ticks, graph and validation for inspection ([22 §8](./22-debugging-and-devtools.md#8-delivery-and-acceptance)), including causal ids and rollback labelling.
 - JSON Logic evaluator with dependency inference, step budget, `fn` registry.
 - Conditions and hidden policy.
 - Sync validation, implied rules ([01 §3.3.1](./01-schema-contract.md#331-implied-rules)), severity, and the error model, including `setInputError`. Regex engine hook ([06 §2.2](./06-validation.md#22-regex-safety)).
@@ -45,16 +47,18 @@
 - Async validation.
 - `assets` plugin: asset stores, pending-work gate and `toSnapshot` field-type hooks ([08 §2.1](./08-async-data-and-registries.md#21-asset-stores)).
 - Static and map option sources, cascade invalidation, `in-options`, `whenEmpty`, auto-select, multi-select parents with `E_AMBIGUOUS_OPTION` and `groupBy` ([13](./13-option-sources-and-cascading.md)).
-- Loading, reload policies, submission, external error mapping.
+- Loading, reload policies, submission, external error mapping. Plugin submit hooks and `ctx.notices.set` ([03 §8.1](./03-state-model.md#81-plugin-api)).
 - External updates and conflicts (`applyExternal`, [09 §7](./09-loading-and-submission.md#7-external-updates-and-conflicts)).
 - `EngineState` shape and server-safe mode, designed alongside loading and options.
 - Dynamic sub-forms ([08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)).
+- Inspection instrumentation for async operations, loading, submission and reconciliation ([22 §8](./22-debugging-and-devtools.md#8-delivery-and-acceptance)).
 
 ### M3: Behavior and authoring
 - Computed values and effects with origins, in full.
 - Macro registry and `expandContract`: normalization, expansion, `ctx.expand` with the depth and output limits, and the `sources` side map ([15](./15-macros.md)). The `hierarchy` macro ships as the reference macro ([15 §7.1](./15-macros.md#71-hierarchy)). `@formgraph/macros` standard library, each macro tested against its cookbook long form ([16](./16-cookbook.md)).
 - `toPayloadSchema` ([09 §6](./09-loading-and-submission.md#6-json-schema-export-of-the-submitted-data)).
 - `fromJsonSchema` importer ([01 §8](./01-schema-contract.md#8-json-schema-import)).
+- Inspection instrumentation for macro expansion/source maps and localization ([22 §8](./22-debugging-and-devtools.md#8-delivery-and-acceptance)).
 - Localization: resolver chain, core `{name}` formatting, `icu` plugin (`@formgraph/engine/icu`, [10 §2.1](./10-localization.md#21-formatter)), contract `locales`, `localeSources`, BCP 47 normalization, `setLocale` ([10](./10-localization.md)).
 
 ### M4: Plugins and ecosystem
@@ -64,7 +68,7 @@
 - Adapter SSR glue only (`getServerSnapshot` etc.), on top of the M2 server-safe mode.
 - Full React adapter and reference unstyled renderers with ranked tester resolution; then Vue, Solid, Svelte. Adapter conformance suite.
 - `@formgraph/testing`.
-- Devtools.
+- Opt-in `debug` plugin hardening and `@formgraph/devtools` clients (inspection protocol and instrumentation are already in M0–M3; [22](./22-debugging-and-devtools.md)).
 
 ### M5: Hardening and 1.0
 - Hardening: fuzzing and property-test coverage, performance regressions.

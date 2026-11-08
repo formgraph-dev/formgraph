@@ -215,7 +215,7 @@ engine.reload({ entity?, policy? })
 2. `mode:'patch'`: only dirty paths are included (arrays as whole values).
 3. Assets serialize as `{ ref, name, size, mime, meta? }` ([01 §3.3](./01-schema-contract.md#33-core-config-and-ui)); `status`, `progress`, and `error` are stripped.
 4. Remap data paths to `serializeAs` wire paths (dot paths create nested objects).
-5. Run the outbound transformer if one is configured. It receives `({ payload, mode, loaded, values, dirtyPaths }, ctx)` (`OutboundTransformer`, [08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)): the payload so far, the saved data as loaded (after the inbound mapping), the full resolved values, and the list of changed paths. That's enough to compute row-level diffs ([16 §17](./16-cookbook.md#17-row-level-diffs-for-patch-submissions)).
+5. Run the outbound transformer if one is configured. It receives `({ payload, mode, loaded, values, dirtyPaths, confirmed }, ctx)` (`OutboundTransformer`, [08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)): the payload so far, the saved data as loaded (after the inbound mapping), the full resolved values, the list of changed paths and the confirmed gates. That's enough to compute row-level diffs ([16 §17](./16-cookbook.md#17-row-level-diffs-for-patch-submissions)).
 
 In `patch` mode, **arrays are always atomic** (Q4): if anything in an array changed, the whole array is sent. Row-level diffs are a transformer concern, not a contract feature.
 
@@ -273,7 +273,7 @@ engine.applyExternal(
 
 - Updates **only the given paths** in the `loaded` layer, with origin `external`: no effects, and cascades trust the value ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)). The inbound transformer is **not** run, because it works on whole entities. Send the mapped value shape.
 - Arrays are atomic, as everywhere else. A change replaces the whole array, and row keys are matched by `identityKey` when there is one ([04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity)).
-- During `submit()`, external changes are queued and applied after it finishes. If the submit reloaded from a response entity, each queued change is first compared with the new `loaded` value at its path; changes already reflected there are dropped.
+- During `submit()`, external changes are queued and applied after it finishes. If the submit reloaded from a response entity, each queued change is first compared with the new `loaded` value at its path; changes already reflected there are dropped. If the response application failed and a reconciliation is pending, queued changes are also folded into its overlay and do not invalidate its id ([§4.2](#42-acknowledgement-and-response-reconciliation)).
 
 ### 7.1 Conflict detection
 
@@ -334,7 +334,7 @@ interface Snapshot {
   base: Record<DataPath, Json | null>;      // baseline of each stored leaf of `current` when taken
   optionDeps: Record<RowKeyPath, Json>;      // canonical dependency-input tuples for saved choice selections (§8.2)
   stash?: Json;                             // dynamic-group orphans kept by orphanPolicy 'stash' (08 §5)
-  touched?: DataPath[];                     // row key paths; restored so messages show as they did
+  touched?: RowKeyPath[];                   // row key paths; restored so messages show as they did
   takenAt: string;                          // ISO timestamp
 }
 
@@ -375,7 +375,7 @@ savedRevision = engine.revision.get();     // the restored state is what's store
 3. **Plan discriminators before loading schemas.** Against an immutable baseline/contract generation, decide stale handling (rule 6) for each discriminator or its containing atomic array **without writing live state**. A dropped draft discriminator selects the baseline schema; kept/conflicted draft values select the draft schema. Stage required schema loads, normalization, compilation and graft/orphan plans off-store, recursively for nested groups. Do not detach the live schema, run orphan disposal or alter any live layer while awaiting. A failed/superseded stage discards the plan and leaves live state unchanged. A baseline or relevant live-value change during staging supersedes the restore with `E_SUPERSEDED`; the caller may retry against the new state.
 4. **Commit with origin `restore`** ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): after rules 5–6 resolve all remaining paths against the planned schemas, recheck the captured generation and commit planned grafts, layers, row maps, conflicts, stash and touched state **atomically**, with no effects (origin policy `history: 'clear'`). An applied draft array reuses validated current draft keys and reconciled baseline associations; a dropped array keeps baseline current keys and baseline associations. Never install draft keys on a different baseline array. Reconcile nested arrays recursively and discard meta for removed/unmatched rows; restore only touched entries whose keys survive. Observers never see draft discriminators with baseline children or a partially restored schema.
 5. **Paths that no longer exist** in the contract are dropped with `W_SNAPSHOT_PATH_DROPPED`. Values that exist but are now invalid (an option was removed, a rule changed) are kept and simply fail validation.
-6. **Stale drafts.** For each path `p`, with `base` = `snapshot.base[p]`, `external` = the baseline now, and `local` = the draft value, the [§7.1](#71-conflict-detection) table decides: if `base` equals `external`, or there's no draft value, the draft applies; if `local` equals `external`, the path is dropped from `current` with no conflict. Otherwise (a real conflict) `onStale` decides:
+6. **Stale drafts.** For each path `p`, with `base` = `snapshot.base[p]`, `external` = the baseline now, and `local` = the draft value, the [§7.1](#71-conflict-detection) table decides, in its order: with no draft value there is nothing to apply; if `local` equals `external`, the path is dropped from `current` with no conflict (even when `base` also equals it); else if `base` equals `external`, the draft applies. Otherwise (a real conflict) `onStale` decides:
    - `conflict` (default): the draft value is applied and flagged as a conflict (§7.2). Submit is blocked until resolved (`submission.conflicts`).
    - `keep-draft`: the draft value wins silently.
    - `drop`: the draft value is discarded for that path.
@@ -413,7 +413,7 @@ interface EngineState {
   layers: { default: Json; loaded: Json; current: Json };
   rows: Record<DataPath, RowKey[]>;
   baselineRows: Record<RowKeyPath, BaselineRowKeys>; // baseline associations and unresolved provenance
-  meta: { touched: RowKeyPath[]; visited: RowKeyPath[]; conflict: Record<DataPath, Conflict>; stash?: Json };
+  meta: { touched: RowKeyPath[]; visited: RowKeyPath[]; conflict: Record<RowKeyPath, Conflict>; stash?: Json };
   notices?: Record<RowKeyPath, Notice[]>;    // external and settled async messages only
   options: Record<string, Json>;                 // option cache entries by cache key (08 §3)
   subSchemas: Record<DataPath, { discriminator: Json; hash: string; nodes?: InputNode[] }>;   // loaded dynamic sub-schemas (08 §5)

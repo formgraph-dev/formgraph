@@ -29,7 +29,7 @@ const registry2 = coreRegistry.extend({
 });
 
 // Object registration also infers plugin entries, options and members.
-const debugRegistry = coreRegistry.extend({ plugins: { debug } });
+const auditRegistry = coreRegistry.extend({ plugins: { 'x-audit': audit } });
 ```
 
 ```ts
@@ -108,7 +108,7 @@ engine.getValues();                     // Values
 `ValuesOf<C>` and `PayloadOf<C>` first extract the registry entries, literal input and caps from `TypedContract<E, Input, L>`, then walk the input using those entries. An unbranded/unknown input yields `Json`. `CompiledSchema<C>` retains that same phantom contract type through loading; it never reconstructs types from runtime registry ids. Inference limits remain attached to the brand through both stages.
 
 - **Typed overloads, untyped fallback.** `field`, `setValue`, `array`, `revert`, `touch` take `Paths` with the value type looked up from `Values`. A string that isn't a known path literal (relative `./` refs, `/` PathRefs, computed strings) falls back to `FieldController<Json>`.
-- **Payload.** Without an outbound transformer, `serialize()` and the submit target receive `PayloadOf<C>`: values after `serializeAs` renames and hidden/disabled policies. With a transformer, the transformer's output type. `SubmitTarget` and `OutboundTransformer` are generic over it ([08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)).
+- **Payload.** Without an outbound transformer, `serialize()` and the submit target receive `PayloadOf<C>`: values after `serializeAs` renames and hidden/disabled policies. With a transformer, the transformer's output type `O` of its `OutboundTransformer<P, O>`. Registry ids are key-only, so `O` is not inferred from a contract's `transformerId` and stays `Json` unless the host annotates it (open question: typed transformer entries). `SubmitTarget` and `OutboundTransformer` are generic over it ([08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)).
 - **Renderers** get `FieldController<V>` and the field type's `ui`, as today.
 
 ## 4. Runtime contracts widen

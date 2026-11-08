@@ -59,7 +59,7 @@ interface EvalScope {
   values: Json;            // resolved root values
   scopePath: DataPath;     // where the expression lives (for ./ and ../)
   row?: Json; index?: number;
-  option?: SelectOption;   // $option, only in options filters (13 §2.1)
+  option?: SelectOption;   // $option, only in options `filter` / `disableWhen` (13 §2.1–§2.1.1)
   selected?: SelectOption; // $selected, only in onSelect effects (13 §7)
   context: Record<string, Json>;   // host-provided JSON: user role, locale, feature flags, `now` (ISO string)
   meta: { dirty(p): boolean; touched(p): boolean; visible(p): boolean };
@@ -73,7 +73,7 @@ interface EvalScope {
 **Contracts are untrusted input.** A compromised or misconfigured CMS must not be able to run code on clients.
 
 - There is no `eval`, `new Function`, or `with` anywhere in the core or in the built-in evaluators.
-- `fn` can only call functions the **host app registered** by name. An unknown name is `E_UNKNOWN_REGISTRY_ID` in validate-core: functions live on the `Registry` ([08 §1](./08-async-data-and-registries.md#1-registries)), so `loadContract` checks them without an engine.
+- `fn` can only call functions the **host app registered** by name. An unknown name is `E_UNKNOWN_REGISTRY_ID` at compile: functions live on the `Registry` ([08 §1](./08-async-data-and-registries.md#1-registries)), so `loadContract` checks them without an engine.
 - Registered functions get a frozen copy of their args and the scope, and can't write state. They return a value or throw. A throw is caught and logged (`W_FUNCTION_THREW`), and the facet falls back. Display facets fail open; anything that decides validity **fails closed**:
 
   | Facet | Fallback |

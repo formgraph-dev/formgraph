@@ -170,7 +170,7 @@ A query transformer that returns `null` (skip, [08 §2](./08-async-data-and-regi
 ### 4.1 Deciding "valid"
 
 - **static / map:** synchronous. Is the value among the newly computed options?
-- **provider:** possibly asynchronous. While options are loading, the value is kept and the field is marked `meta.optionsPending`. Once they arrive:
+- **provider:** possibly asynchronous. While options are loading, the value is kept and the field's `OptionsState.pendingValidity` is true. Once they arrive:
   - If the response is complete (`nextState === null` on the first page), membership decides.
   - If the results are paginated or search-based, a missing value doesn't mean it's invalid. The engine calls the field's `resolveSelectedSourceId` ([08 §2](./08-async-data-and-registries.md#2-provider-options)) with the new deps. The value is valid if that source resolves it. If neither check is available, the engine falls back to `clear` and warns at compile time (`W_CASCADE_UNVERIFIABLE`).
 - If the parent changes again before this resolves, the load generation check throws away the stale answer. Only the latest parent value can invalidate the child.
@@ -179,7 +179,7 @@ A query transformer that returns `null` (skip, [08 §2](./08-async-data-and-regi
 
 Every field with an options source gets an implicit `in-options` rule. It reuses the validity check and also fails for values whose option is disabled ([§2.1.1](#211-disabling-options)), so a value set by host code, or kept by `keep`, gets a visible error instead of being submitted silently. It can be turned off with `validateInOptions: false`, for example for a combobox renderer that accepts free entry. (For an "Other, please specify" pattern, prefer a separate text field, [16 §3](./16-cookbook.md#3-other-option-with-free-text).)
 
-Submit waits for any `optionsPending` validity checks, the same way it waits for async validation ([06 §4](./06-validation.md#4-async-validation)).
+Submit waits for any `pendingValidity` checks, the same way it waits for async validation ([06 §4](./06-validation.md#4-async-validation)).
 
 ## 5. Empty parent
 

@@ -68,10 +68,10 @@ Details: [11 · Rendering & Adapters](./11-rendering-and-adapters.md), [10 · Lo
 
 ## 6. Extension without growing the core
 
-**Registrations** add capabilities, **macros** expand convenient authoring forms into existing nodes, and **plugins** add runtime features with per-engine instances. Built-in plugins cover history, drafts, wizard navigation, ICU formatting and assets. The default engine entry includes them; a slim entry allows explicit selection. Custom fields remain atomic values, not hidden nested dependency graphs.
+**Registrations** add capabilities, **macros** expand convenient authoring forms into existing nodes, and **plugins** add runtime features with per-engine instances. Built-in plugins cover history, drafts, wizard navigation, ICU formatting and assets. The default engine entry includes them (the opt-in `debug` plugin is never added automatically); a slim entry allows explicit selection. Custom fields remain atomic values, not hidden nested dependency graphs.
 
-Types flow from registrations and statically authored contracts; contracts received at runtime use wider JSON types. Diagnostics, testing helpers and devtools make the same architecture inspectable without becoming UI requirements.
+Types flow from registrations and statically authored contracts; contracts received at runtime use wider JSON types. Diagnostics and testing helpers explain contracts and engine outcomes; an opt-in, read-only, redacted `debug` plugin exposes runtime state and causes to devtools or other clients without making UI a core requirement.
 
-Details: [03 §8 · Plugins](./03-state-model.md#8-plugins), [15 · Macros](./15-macros.md), [01 §3.4 · Custom Fields](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions), [21 · Type Inference](./21-type-inference.md), [17 · Diagnostics](./17-diagnostics.md), [11 §9 · Testing](./11-rendering-and-adapters.md#9-testing).
+Details: [03 §8 · Plugins](./03-state-model.md#8-plugins), [15 · Macros](./15-macros.md), [01 §3.4 · Custom Fields](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions), [21 · Type Inference](./21-type-inference.md), [17 · Diagnostics](./17-diagnostics.md), [22 · Debugging & Devtools](./22-debugging-and-devtools.md), [11 §9 · Testing](./11-rendering-and-adapters.md#9-testing).
 
 For concrete usage patterns, continue with the [Cookbook](./16-cookbook.md); for signatures, see the [API Reference](./18-api-reference.md). Implementation milestones and unresolved questions live in the [Roadmap](./12-open-questions-and-roadmap.md).

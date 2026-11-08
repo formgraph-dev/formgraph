@@ -257,7 +257,7 @@ defineRenderers({ field: { choice: Select } });   // type error if Select expect
 Borrowed from JSON Forms ([14](./14-prior-art.md)). Any renderer can be registered with a tester that scores how well it fits a node:
 
 ```ts
-type Tester = (node: CompiledNode, ctx: { platform: string; parent?: CompiledNode }) => number; // -1 = no match
+type Tester = (node: CompiledNode, ctx: { platform: string; parent?: CompiledNode }) => number; // -1 = no match; ctx.platform is an adapter-supplied label (for example `web` or `native`), unrelated to the engine's `platform` hooks option (§6)
 
 renderers.register(LargeOptionsCombobox, (n) =>
   isField(n, 'choice') && n.node.options?.source === 'provider' ? 20 : -1);   // isField narrows n.node to FieldOf<'choice'>
@@ -293,7 +293,7 @@ A field type can be registered in the engine with no renderer on this client (fo
 
 Provided by the `wizard` plugin ([03 §8](./03-state-model.md#8-plugins)), which the default entry installs: `engine.wizard()` returns the `WizardController`. Fields in inactive steps compile lazily ([03 §6.3](./03-state-model.md#63-lazy-compile)).
 
-Steps are `group` nodes with `step: true`. Their presentation (tabs, cards, etc.) is still free via `ui.variant`. A core `WizardController` (built on top of the engine) provides `steps`, `current`, `canNext` (validates only the current step's subtree; errors always block, warnings follow their gate's policy, see [06 §7.3](./06-validation.md#73-gates-submit-policy-for-warnings)), `next({ confirm? })`, `prev`, and `goTo`. Steps can be conditionally visible, and hidden steps are skipped.
+Steps are `group` nodes with `step: true`. Their presentation (tabs, cards, etc.) is still free via `ui.variant`. The `WizardController` (from the `wizard` plugin, built on top of the engine) provides `steps`, `current`, `canNext` (validates only the current step's subtree; errors always block, warnings follow their gate's policy, see [06 §7.3](./06-validation.md#73-gates-submit-policy-for-warnings)), `next({ confirm? })`, `prev`, and `goTo`. Steps can be conditionally visible, and hidden steps are skipped.
 
 ```ts
 next(opts?: { confirm?: string[] }): Promise<{
@@ -313,7 +313,7 @@ if ((await wiz.next()).ok) await drafts.put(key, engine.snapshot());
 
 The core is platform-agnostic (D24); everything platform-specific lives in adapters or host code.
 
-**What the core may use.** ES2020 plus `Promise`, `Map`/`WeakMap`, `AbortController`/`AbortSignal` (constructor, `abort()`, `aborted`, `addEventListener` only; no `AbortSignal.any`/`timeout`), and `RegExp` with the `u` flag. It never touches `window`, `document`, DOM types, `requestAnimationFrame`, `structuredClone`, `TextEncoder`, `crypto`, `Blob`/`File` at runtime, Node built-ins, or `Intl`:
+**What the core may use.** ES2020 plus `Promise`, `Map`/`WeakMap`, `AbortController`/`AbortSignal` (constructor, `abort()`, `aborted`, `addEventListener` only; no `AbortSignal.any`/`timeout`), and `RegExp` with the `u` flag. It never *requires* `window`, `document`, DOM types, `requestAnimationFrame`, `structuredClone`, `TextEncoder`, `crypto`, `Blob`/`File` at runtime, Node built-ins, or `Intl`. The only globals it reads are the guarded `Platform` defaults below (`Date.now`, timers, `requestAnimationFrame` if present, and the `__DEV__` / `process.env.NODE_ENV` probes), and the lint rule allows exactly that set:
 - `contractBytes` counts UTF-8 bytes with a small loop; hashes (`contractHash`, cache keys, sub-schema hashes) are a bundled pure-JS hash.
 - Asset inputs (`Blob | PlatformFile`, [08 §2.1](./08-async-data-and-registries.md#21-asset-stores)) are passed through to the host's store untouched.
 - The `icu` plugin needs `Intl.PluralRules`/`NumberFormat` and checks for them at install and throws a plain error naming the missing API; Hermes ships them. Core `{name}` formatting needs nothing.
@@ -350,7 +350,7 @@ Fully native hosts (Swift/Kotlin) are out of scope for 1.0; the contract and sem
 
 ## 7. Devtools
 
-`@formgraph/devtools` subscribes to the engine and shows the layers per path (which one won), the DAG with the last tick's evaluated nodes highlighted, recent commits with origins (its own capped buffer, filled through `onCommit`, [03 §2.5](./03-state-model.md#25-commit-hooks)), and async request timelines.
+`@formgraph/devtools` is a client of the opt-in `debug` plugin's read-only protocol ([22](./22-debugging-and-devtools.md)); it never subscribes to the engine or reads private store state. It shows the layers per path (which one won), the dependency graph with recorded evaluation causes, recent commits with origins, async request timelines and submission/reconciliation state, all from bounded, redacted DTOs. Embedded panels, browser extensions, native tools and CLIs are interchangeable clients.
 
 ## 8. Accessibility
 

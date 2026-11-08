@@ -37,7 +37,7 @@ All registries share one shape: a typed `Map<string, T>` with `register`, `get`,
 | `renderers` | `fieldType` / `ui.variant` / `step` | adapter-specific (11) | no |
 | `regex` | — (all contract patterns) | `RegexEngine` (06 §2.2); a single slot, not a map, inherited from the parent | no |
 
-A contract id with no matching registration is `E_UNKNOWN_REGISTRY_ID` at compile time, naming the registry. Allow-listable registries can be restricted per contract with `allow` (`E_NOT_ALLOWED` takes precedence, [05 §4](./05-expressions.md#4-security-model)).
+A contract id with no matching registration is `E_UNKNOWN_REGISTRY_ID` at compile time, naming the registry, except for macros (`E_UNKNOWN_MACRO`, expand), evaluators (`E_UNKNOWN_EVALUATOR`, validate-core), field types (`W_UNKNOWN_FIELD_TYPE`), severities and migrations, which have their own codes ([17](./17-diagnostics.md)). Allow-listable registries can be restricted per contract with `allow` (`E_NOT_ALLOWED` takes precedence, [05 §4](./05-expressions.md#4-security-model)).
 
 Every `*Source`, `provider`, `store`, and `target` is just a registered function. It may read a network API, a bundled JSON file, the file system, IndexedDB, a native module, a worker, or an in-memory array. The engine only sees its inputs and outputs (§4).
 
@@ -66,7 +66,7 @@ interface TransformCtx { context: Json; formId: string; locale: LocaleTag }
 type Transformer<I, O> = (input: I, ctx: TransformCtx) => O;   // synchronous
 
 type InboundTransformer  = Transformer<{ raw: Json; mapped: Json }, Json>;              // returns values, 09 §2
-type OutboundTransformer<P = Json, O = Json> = Transformer<{ payload: P; mode: 'full' | 'patch'; loaded: Json; values: Json; dirtyPaths: Path[]; confirmed: string[] }, O>;   // 09 §4; P/O inferred for typed contracts (21 §3)
+type OutboundTransformer<P = Json, O = Json> = Transformer<{ payload: P; mode: 'full' | 'patch'; loaded: Json; values: Json; dirtyPaths: DataPath[]; confirmed: string[] }, O>;   // 09 §4; P/O inferred for typed contracts (21 §3)
 ```
 
 An outbound transform may omit, rename or synthesize data. Its paired target must return `acknowledgedPaths` identifying the frozen form inputs actually persisted, not guess coverage from output key names or from a successful request. Without a transformer, omitted coverage defaults to `serializedPaths`; explicit coverage can restrict it. `[]` explicitly acknowledges no units; it is not omitted metadata. `serializedPaths` is local integration metadata, not automatically part of the backend request. Missing required or invalid coverage is a saved-but-unreconciled `E_SUBMIT_RESPONSE`, never permission to clear all input edits. The caller may correct coverage via `reconcileSubmit` without saving again ([09 §4.2](./09-loading-and-submission.md#42-acknowledgement-and-response-reconciliation)).

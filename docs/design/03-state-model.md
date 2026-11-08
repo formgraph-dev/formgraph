@@ -24,7 +24,7 @@ The `FormStore` snapshot is divided into **slices**. Three of them are value **l
 | `meta.stash` | Dynamic-group orphans kept by `orphanPolicy: 'stash'` ([08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)) | yes |
 | `meta.conflict[p]` | Open conflicts ([09 §7.2](./09-loading-and-submission.md#72-resolving)) | no |
 | `meta.touched[p]`, `meta.visited[p]` | Interaction flags ([§5](#5-field-meta-and-form-status)) | no |
-| `meta.field[p]` | `validating`, `asyncStatus` ([§5](#5-field-meta-and-form-status)) | no |
+| `meta.field[p]` | `validating`, `asyncStatus`, `userCleared` ([§5](#5-field-meta-and-form-status)) | no |
 
 Non-overridable computed values aren't stored in any slice; they're evaluated during resolve ([07 §3](./07-effects-and-computed.md#3-computed-values)).
 
@@ -53,9 +53,9 @@ All writes go through one entry point:
 
 ```ts
 store.transact(origin, (tx) => {
-  tx.set('current', path, value);
-  tx.delete('current', path);
-  tx.meta(rowKeyPath, patch);
+  tx.set(path, value);                        // the layer is the one ORIGIN_POLICY[origin].layer names
+  tx.delete(path);
+  tx.meta('rows', rowKeyPath, patch);         // core meta sub-structure key first (§8.1 CoreMetaKey)
   tx.notices(rowKeyPath, source, list);
 });
 ```
@@ -115,7 +115,7 @@ const off = engine.use(hooks);                      // returns detach
 ```
 
 - `PendingTx` / `CommittedTx` carry `{ txId, origin, entries }`, entries as in [§2.1](#21-transactions). Hooks **can't change** entries. To change values, use effects, which are visible to the dependency graph.
-- Entries live only for the commit. A hook that needs history (devtools, history plugin) copies what it needs in `onCommit`.
+- Entries live only for the commit. A hook that needs history (for example the history plugin or an audit log) copies what it needs in `onCommit`. Inspection needs more than commits and uses core observation points ([22 §3](./22-debugging-and-devtools.md#3-core-observation-boundary)).
 - Hooks run in registration order, plugins first. An exception in `onBeforeCommit` aborts the commit and is reported. An exception in `onCommit` is logged and doesn't affect other hooks.
 - `onCommit` can start new transactions (for example autosave status). They are queued like listener writes ([§2.1](#21-transactions)).
 
@@ -255,7 +255,8 @@ interface FieldMeta {
   touched: boolean;         // blurred at least once (handlers.onBlur()/touch() only; no write of any origin sets it)
   visited: boolean;         // focused at least once (handlers.onFocus())
   validating: number;       // count of in-flight async validations
-  asyncStatus?: 'idle' | 'loading' | 'error';   // for option sources
+  asyncStatus?: 'idle' | 'loading' | 'ready' | 'error';   // for option sources
+  userCleared?: boolean;    // the person deliberately cleared this field in this session (13 §4.1); runtime-only, not in drafts
 }
 
 interface FormState {                // engine.form (18); select a key or a function to narrow re-renders
@@ -294,7 +295,7 @@ Meta and notices are keyed by **row key paths** (for example `addresses[#k3].cit
 
 ## 6.1 Commit entries
 
-Entries are built per transaction and dropped after hooks run ([§2.5](#25-commit-hooks)); nothing is retained in production. Devtools keeps its own capped buffer through `onCommit` ([11 §7](./11-rendering-and-adapters.md#7-devtools)). Undo/redo keeps its own stack (§6.2).
+Entries are built per transaction and dropped after hooks run ([§2.5](#25-commit-hooks)); nothing is retained in production. Debugging keeps its own bounded, opt-in buffer through the `debug` plugin ([22 §6](./22-debugging-and-devtools.md#6-lifecycle-limits-and-performance)); commit hooks alone are not sufficient for it. Undo/redo keeps its own stack (§6.2).
 
 ## 6.2 Undo / redo (opt-in)
 
@@ -367,6 +368,8 @@ interface ArrayHandle {
 
 Each call updates values and row keys together in one tick.
 
+**Submit lock.** While a submit holds the edit lock, `setValue`, `revert`, `reset`, array commands, history replay and host `reload` reject with `E_SUBMIT_BUSY`, and `restore` with `E_RESTORE_BUSY` ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)); `applyExternal` queues.
+
 Writes through this API get origin `host`. Renderers write through `FieldController.setValue`, which gets `user`. Callers never pass built-in origins; what each origin does is defined once in [07 §2.1](./07-effects-and-computed.md#21-origin-policy). Host code can skip effects for one write with `runEffects: false` (for example for bulk writes).
 
 **`reset`** is one tick with origin `reset` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). It:
@@ -379,7 +382,7 @@ Writes through this API get origin `host`. Renderers write through `FieldControl
 
 ## 8. Plugins
 
-Decision D23 ([README](./README.md#key-decisions-adr-summary)). A feature may be a plugin only if the host uses it purely through explicit calls **and** its absence changes no default behaviour of fields, validation or submission. Plugins: `history` (§6.2), `drafts` (snapshot/restore, [09 §8](./09-loading-and-submission.md#8-snapshots-drafts)), `wizard` ([11 §5](./11-rendering-and-adapters.md#5-wizards)), `icu` (ICU message formatting, [10 §2.1](./10-localization.md#21-formatter)), `assets` (`asset` / `multi-asset` fields, [08 §2.1](./08-async-data-and-registries.md#21-asset-stores)). Conflicts, async validation, options, loading and submission are core.
+Decision D23 ([README](./README.md#key-decisions-adr-summary)). A feature may be a plugin only if the host uses it purely through explicit calls **and** its absence changes no default behaviour of fields, validation or submission. Plugins: `history` (§6.2), `drafts` (snapshot/restore, [09 §8](./09-loading-and-submission.md#8-snapshots-drafts)), `wizard` ([11 §5](./11-rendering-and-adapters.md#5-wizards)), `icu` (ICU message formatting, [10 §2.1](./10-localization.md#21-formatter)), `assets` (`asset` / `multi-asset` fields, [08 §2.1](./08-async-data-and-registries.md#21-asset-stores)). These five are the **built-in set** that the default entry installs. A sixth built-in, the opt-in `debug` plugin ([22](./22-debugging-and-devtools.md)), is not part of that set and is never added automatically. Conflicts, async validation, options, loading and submission are core.
 
 ```ts
 import { createFormEngine } from '@formgraph/engine';           // default entry: history, drafts, wizard, icu, assets are already in the registry
@@ -391,7 +394,7 @@ const registry = createRegistry().plugin(history).plugin(drafts);
 createFormEngine({ contract, registry, plugins: { history: { limit: 100 } } });
 ```
 
-A plugin is a **factory recorded in the `Registry`** ([08 §1](./08-async-data-and-registries.md#1-registries)), not something passed to the engine: `registry.plugin(factory)` registers the field types and validators it declares (so `loadContract` sees them with no engine) and records the factory. Each engine then creates its own **instance** from it, so engines sharing one registry have separate plugin state. The default entry's `createRegistry` starts with the built-ins, and its `loadContract` / `createFormEngine` add any built-in a registry lacks; the slim entry starts empty. The API is the same in both cases. Built-in plugins (`history`, `drafts`, `wizard`, `assets`, `icu`) attach their members at top level (`engine.history.undo()`, `engine.snapshot()`, `engine.wizard()`; full list in [18 §5](./18-api-reference.md#5-built-in-plugin-members)). With the slim entry, calling a method of a plugin whose factory isn't in the registry throws `E_PLUGIN_MISSING`, naming the plugin and its import. Engine types are inferred from the registry's type (§8.1), so a missing plugin is also a per-engine type error; the runtime throw remains for JS callers. Third-party plugins are reachable only as `engine.plugins[name]` (§8.1).
+A plugin is a **factory recorded in the `Registry`** ([08 §1](./08-async-data-and-registries.md#1-registries)), not something passed to the engine: `registry.plugin(factory)` registers the field types and validators it declares (so `loadContract` sees them with no engine) and records the factory. Each engine then creates its own **instance** from it, so engines sharing one registry have separate plugin state. The default entry's `createRegistry` starts with the five-plugin built-in set, and its `loadContract` / `createFormEngine` add any member of that set a registry lacks (never `debug`); the slim entry starts empty. The API is the same in both cases. Built-in plugins (`history`, `drafts`, `wizard`, `assets`, `icu`) attach their members at top level (`engine.history.undo()`, `engine.snapshot()`, `engine.wizard()`; full list in [18 §5](./18-api-reference.md#5-built-in-plugin-members)). With the slim entry, calling a method of a plugin whose factory isn't in the registry throws `E_PLUGIN_MISSING`, naming the plugin and its import. Engine types are inferred from the registry's type (§8.1), so a missing plugin is also a per-engine type error; the runtime throw remains for JS callers. Third-party plugins are reachable only as `engine.plugins[name]` (§8.1).
 
 `icu` and `assets` have no methods; slim core detects their absence from the contract instead: an ICU construct in a message or an `asset`/`multi-asset` field fails with `E_PLUGIN_MISSING` at compile (or, for `LocaleSource` bundles, when they arrive), naming the import. The form never runs with raw message syntax or unhandled fields.
 
@@ -433,7 +436,7 @@ interface BasePluginStore<O extends string, S extends SliceAccess> {
 type PluginStore<Name extends string = string> = BasePluginStore<`x-${string}`, OwnSlices<Name>>;   // third-party
 type PrivilegedPluginStore = BasePluginStore<CoreOrigin | `x-${string}`, AllSlices>;                // built-ins
 
-type CoreOrigin = keyof typeof ORIGIN_POLICY;                 // 07 §2.1: user, host, load, external, effect, reset, history, restore, …
+type CoreOrigin = keyof typeof ORIGIN_POLICY | 'history' | 'restore';   // 07 §2.1: the const table plus the plugin-registered built-in origins (resume, load, … are in the table)
 type CoreMetaKey = 'rows' | 'baselineRows' | 'stash' | 'conflict' | 'touched' | 'visited' | 'field';   // the meta sub-structures in §1
 
 type StoreReader = Pick<FormStore, 'snapshot' | 'select' | 'selectForm'>;   // §2.2: immutable snapshot (all slices) and Readable handles
@@ -486,7 +489,7 @@ engine.plugins['x-audit'].flush();   // typed AuditApi
   | field type `toSnapshot` | value filter in `snapshot()` | `assets` (keeps `ready` refs) |
   | text `format` | message formatting beyond `{name}` | `icu` |
 - `exportState`/`resumeState` let a plugin take part in server rendering ([09 §9](./09-loading-and-submission.md#9-server-rendering)). Built-ins: `wizard` exports the current and visited steps; `history`, `drafts`, `assets` and `icu` export nothing (the undo stack starts empty, as after a load). `resumeState` input is untrusted: the plugin validates it, and on failure starts from its default state with `W_RESUME_PLUGIN_UNKNOWN`.
-- **Privileges.** Built-in plugins are defined with an internal variant of `definePlugin` (not exported) whose `ctx.store` is the `PrivilegedPluginStore`: commits under any origin, every slice. `PluginStore` and `PrivilegedPluginStore` both extend `BasePluginStore<Origin, Slices>`, which fixes the read side and the shape of `commit`; the type parameters set which origins and slices a plugin may use. The type parameters are only a compile-time guard. At runtime the engine also checks that a commit's origin is one this plugin registered, and that a slice name carries the plugin's prefix, and throws otherwise. Third-party plugins get `PluginStore`, which cannot write other plugins' slices, `errors` or core meta, and cannot use built-in origins. This is enforced by types and the plugin API, not a security boundary: plugins are trusted code the host chose to install and run in the same process, and the restriction prevents accidents and collisions with core or other plugins. Contracts are the untrusted input ([05 §4](./05-expressions.md#4-security-model)). Form-level messages from a plugin go through `ctx.notices.set` (`source: 'plugin'`, `rule` = the plugin name); they count like any notice, so an `error` from a plugin blocks submit with reason `errors`.
+- **Privileges.** Built-in plugins are defined with an internal variant of `definePlugin` (not exported) whose `ctx.store` is the `PrivilegedPluginStore`: commits under any origin, every slice. `PluginStore` and `PrivilegedPluginStore` both extend `BasePluginStore<Origin, Slices>`, which fixes the read side and the shape of `commit`; the type parameters set which origins and slices a plugin may use. The type parameters are only a compile-time guard. At runtime the engine also checks that a commit's origin is one this plugin registered, and that a slice name carries the plugin's prefix, and throws otherwise. Third-party plugins get `PluginStore`, which cannot write other plugins' slices, `notices` (except through `ctx.notices.set`) or core meta, and cannot use built-in origins. The `debug` built-in is the exception to the privileged variant: it receives no store write capability and instead a core-owned, read-only `InspectionHost` through a non-exported capability ([22 §3](./22-debugging-and-devtools.md#3-core-observation-boundary)); third parties never receive it, and core exposes a generic observation sink rather than a debug-named hook. This is enforced by types and the plugin API, not a security boundary: plugins are trusted code the host chose to install and run in the same process, and the restriction prevents accidents and collisions with core or other plugins. Contracts are the untrusted input ([05 §4](./05-expressions.md#4-security-model)). Form-level messages from a plugin go through `ctx.notices.set` (`source: 'plugin'`, `rule` = the plugin name); they count like any notice, so an `error` from a plugin blocks submit with reason `errors`.
 - **Controller extensions.** `ctx.controllers.extend(create, { fieldTypes? })` adds `controller.plugins[name]` to field controllers (all, or only those of the listed types). `create` runs lazily when the controller is first created and may return `dispose`, called when the field or its row is removed. Members live as long as the row key, so they survive reorders, unlike a path string. State belongs in the plugin's own meta slice (keyed by row key), written through `ctx.store`, so it shows up in snapshots and `exportState` like other plugin state. `controller.assets` is built the same way. Third-party plugins use `x-` names only. Scope and array controllers can't be extended yet. Types: `controller.plugins` is typed like `engine.plugins`, from the engine's registry (`FieldController<V, R>`); adapters pass the controller through unchanged.
 - **Submit hooks.** `ctx.submission.on('before' | 'success' | 'failure', fn)`; see [09 §4](./09-loading-and-submission.md#4-submission-pipeline). Observe-only, except that `before` may stop the submit.
 - **Text.** One text formatter: a second `setFormat` throws `E_PLUGIN_CONFLICT`, naming both plugins. `text.messages` defaults from several plugins merge; the host's messages win, and between plugins the first installed wins ([10 §2](./10-localization.md#2-resolution)).

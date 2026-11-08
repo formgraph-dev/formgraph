@@ -1,6 +1,6 @@
 # 01 · Schema Contract
 
-[← Index](./README.md) · Addresses review items C1, C2, C5, C7, P3
+[← Index](./README.md)
 
 ## 1. Principles
 
@@ -464,7 +464,7 @@ export type InputField = InputFieldOf<Field>;   // includes CustomField without 
 export type InputNode = InputField | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode;
 ```
 
-`DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `Omit<FormContract, 'structure'> & { structure: InputNode[] }`; the published input JSON Schema is generated from these input-specific types. Normalized choice options remain `OptionsSource`-only. A macro in an array's single `item` slot must expand to exactly one non-content node, not a list of siblings ([15 §5](./15-macros.md#5-rules)). `expandContract(input, { macros }) → { contract, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
+`DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `Omit<FormContract, 'structure'> & { structure: InputNode[] }`; the published input JSON Schema is generated from these input-specific types. Normalized choice options remain `OptionsSource`-only. A macro in an array's single `item` slot must expand to exactly one non-content node, not a list of siblings ([15 §5](./15-macros.md#5-rules)). `expandContract(input, { macros }) → { contract, pointers, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
 
 **Custom fields at the wire boundary.** Both published input/core schemas have a distinct `fieldType: x-…` branch matching `CustomField`: shared field keys are checked, additional flat config keys and custom `ui` keys are allowed, and all values must be JSON. This envelope lets a `SchemaSource` return a locally registered `x-signature` without global augmentation; it does not claim that arbitrary config is valid. Validate-core resolves the actual registry entry and checks its value/config/ui schemas (or applies the documented missing-type fallback). Unknown names without `x-` still fail; only the custom branch is open. Statically authored `ContractFor<E>`/`defineContract` derives custom fields from `E`, not this permissive envelope, so ids and registered config remain checked ([21](./21-type-inference.md)). Normalization retains the same custom envelope; typed compiled schemas retain the stronger registry/contract brand.
 
@@ -500,7 +500,7 @@ export interface FormContract extends Extensible {
 ### 7.1 Contract load pipeline
 
 ```
-loadContract(json, { registry, strict, limits, allow, textFormat }) → Promise<LoadResult>   // { ok, schema?, diagnostics } (18 §1); textFormat checker: 10 §2.1; limits §7.4, allow: AllowList (05 §4)
+loadContract(json, { registry, strict, limits, allow, textFormat, contractSchema }) → Promise<LoadResult>   // { ok, schema?, diagnostics } (18 §1); textFormat checker: 10 §2.1; limits §7.4, allow: AllowList (05 §4)
   1. detect          size check first (string: bytes > limits.contractBytes; object: bounded walk over
                      nodes and nesting, limits.nodes / limits.jsonDepth, stopping at the first excess)
                      → E_LIMIT_EXCEEDED; then read schemaVersion; unsupported major → E_UNSUPPORTED_VERSION

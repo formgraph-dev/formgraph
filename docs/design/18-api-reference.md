@@ -57,14 +57,13 @@ function createFormEngineFrom<const R extends Registry, const O extends PluginOp
 interface FormEngineOptions<R extends Registry = Registry, C = unknown, O extends PluginOptionsOf<R> | undefined = PluginOptionsOf<R> | undefined> {
   contract: CompiledSchema<C>;                    // from loadContract (§1); stats/refs rechecked → E_LIMIT_EXCEEDED / E_NOT_ALLOWED, phase call (01 §7.4)
   registry: R & RegistryFor<NoInfer<C>>;             // compatible with the typed contract's entries; per-engine child (08 §1)
-  context?: Json;                                 // $context for expressions (05)
+  context?: Record<string, Json>;                 // $context for expressions (05)
   platform?: Partial<Platform>;                   // now, timers, nextFrame, dev; defaults from globalThis; dev: guarded __DEV__/NODE_ENV, else false (11 §6)
   params?: Record<string, Json>;                  // e.g. route id for entity loading (09 §1)
   limits?: Limits;                                // 01 §7.4
   allow?: AllowList;                              // 05 §4
   strict?: boolean;                               // strict → error warnings (17 §1)
   plugins?: O;                                    // inferred per-engine options; false removes that plugin's members (03 §8)
-  history?: { limit?: number; coalesceMs?: number };   // history plugin config, default entry (03 §6.2)
   i18n?: { locale?: LocaleTag; fallbackLocales?: LocaleTag[]; resolve?: TextResolver; format?: TextFormat };   // 10 §2
   resume?: EngineState;                           // server rendering (09 §9)
   server?: boolean;                               // explicit server-safe mode, default false; no window detection (09 §9)
@@ -103,12 +102,15 @@ interface FormEngine<V = Json, Paths extends string = string, Payload = Json> { 
   // writing (origin host)
   setValue<P extends Paths>(path: P, value: ValueAt<V, P>, opts?: { runEffects?: boolean; origin?: `x-${string}` }): void;   // typed overload (21 §3)
   setValue(path: PathRef, value: Json, opts?: { runEffects?: boolean; origin?: `x-${string}` }): void;   // 03 §7
+  revert<P extends Paths>(path: P): void;                       // typed overload (21 §3)
   revert(path: PathRef): void;                                  // restore target baseline; preserve other array cells (03 §3.2)
   reset(opts?: { keepLoaded?: boolean }): void;                 // origin reset (03 §7)
+  array<P extends Paths>(path: P): ArrayHandle;                 // typed overload (21 §3)
   array(path: PathRef): ArrayHandle;                            // 03 §7
+  touch<P extends Paths>(path: P, opts?: { validate?: boolean }): void;   // typed overload (21 §3)
   touch(path: PathRef, opts?: { validate?: boolean }): void;    // mark touched (container: descendants); validate (default true) runs unvalidated blur rules (06 §3)
   batch(fn: () => void): void;                                  // host writes inside → one commit (03 §2.1)
-  setContext(partial: Json): void;                              // starts a tick (05 §3)
+  setContext(partial: Record<string, Json>): void;                              // starts a tick (05 §3)
 
   // loading, submission, external data
   reload(opts?: { entity?: Json; policy?: ReloadPolicy }): Promise<void>;   // rejects E_SUPERSEDED when superseded (09 §3)
@@ -267,6 +269,7 @@ drafts: PluginFactory<'drafts', void, {                                         
 }>;
 wizard: PluginFactory<'wizard', void, { wizard(): WizardController }>;                                       // 11 §5
 assets: PluginFactory<'assets', void>; icu: PluginFactory<'icu', void>;
+debug: PluginFactory<'debug', DebugOptions | void, { debug: DebugApi }>;   // opt-in, `@formgraph/engine/plugins/debug`; never installed by either entry (22 §4)
 
 interface HistoryApi {
   undo(): void; redo(): void; clear(): void;
@@ -288,7 +291,9 @@ interface WizardController {                                    // 11 §5
 - `icu` adds no members; it sets the text formatter ([10 §2.1](./10-localization.md#21-formatter)).
 - Calling a member of a missing built-in plugin is a type error on that engine and throws `E_PLUGIN_MISSING` at runtime (JS callers).
 
-Links: [03 §6.2](./03-state-model.md#62-undo--redo-opt-in), [09 §8](./09-loading-and-submission.md#8-snapshots-drafts), [11 §5](./11-rendering-and-adapters.md#5-wizards).
+- `debug` is opt-in, adds only `engine.debug` and is excluded from the default built-in set; `DebugOptions`, `DebugApi` and `DebugSession` are defined in [22 §4](./22-debugging-and-devtools.md#4-opt-in-plugin-and-client-api). Passing `plugins: { debug }` options without registering it throws `E_PLUGIN_MISSING`.
+
+Links: [03 §6.2](./03-state-model.md#62-undo--redo-opt-in), [09 §8](./09-loading-and-submission.md#8-snapshots-drafts), [11 §5](./11-rendering-and-adapters.md#5-wizards), [22](./22-debugging-and-devtools.md).
 
 ### Registry composition
 
@@ -298,10 +303,10 @@ Links: [03 §6.2](./03-state-model.md#62-undo--redo-opt-in), [09 §8](./09-loadi
 const registry = coreRegistry.extend({
   fieldTypes: { 'x-signature': signature },
   validators: { uniqueEmail },
-  plugins: { debug },                        // keyed by factory name; arrays also supported
+  plugins: { 'x-audit': audit },             // keyed by factory name; arrays also supported
 });
 // Equivalent: coreRegistry.extend()
-//   .fieldType('x-signature', signature).validator('uniqueEmail', uniqueEmail).plugin(debug)
+//   .fieldType('x-signature', signature).validator('uniqueEmail', uniqueEmail).plugin(audit)
 ```
 
 There is no `createRegistry({ parent })` option or static `createRegistry.extend()` method.

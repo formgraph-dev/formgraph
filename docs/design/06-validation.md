@@ -9,7 +9,7 @@ trigger (change | blur | submit | dependency)
   └─► skip if hidden and not `validateHidden`, or disabled and not `validateDisabled` (07 §4)
       └─► sync rules in order (`bail` stops at the first *error*; warning/info rules always run)
           └─► if no sync errors: async rules (debounced, cancellable)
-              └─► feedback[rowKeyPath] = [...sync, ...async, ...external, ...input]   (each tagged with severity, §7)
+              └─► feedback[rowKeyPath] = notices from every source (§5: sync, group, async, external, input, component, plugin), each tagged with severity (§7)
 ```
 
 ## 2. Rule model
@@ -33,7 +33,7 @@ Custom validators:
 ```ts
 registry.validators.register('iban', {
   validate: (value, param, ctx) => isValidIban(value),
-  // returns: true | false | Text (message override) | { message?: Text; severity?: Severity; subPath?: string } | array of those objects
+  // returns: true | false | Text (message override) | { message?: Text; severity?: Severity; path?: PathRef; subPath?: string; code?: string } (NoticeInput, §5) | array of those objects
   message: { key: 'validation.iban', default: 'Invalid IBAN' },
 });
 ```
@@ -83,7 +83,7 @@ interface ValidationConfig {
 }
 ```
 
-`touched` means validate on blur first, then on every change after that. The `blur` event is the renderer calling `controller.handlers.onBlur()` ([11 §2](./11-rendering-and-adapters.md#2-headless-field-api)); `engine.touch(path)` marks touched without running a blur pass. **Dependency triggers** (for example `confirmPassword` depending on `password`) re-run only if the dependent field has already been validated once, so untouched fields don't show errors early.
+`touched` means validate on blur first, then on every change after that. The `blur` event is the renderer calling `controller.handlers.onBlur()` ([11 §2](./11-rendering-and-adapters.md#2-headless-field-api)); `engine.touch(path, { validate? })` marks touched and, by default, runs blur-triggered rules that have no result for the current value (`validate: false` skips that pass). **Dependency triggers** (for example `confirmPassword` depending on `password`) re-run only if the dependent field has already been validated once, so untouched fields don't show errors early.
 
 **How rule `trigger` combines with `mode` / `revalidate`.** The form setting decides *when a field is first validated* and *how often it re-validates*; a rule's `trigger` only narrows which of those passes the rule takes part in. Triggers are ordered `change` < `blur` < `submit` (later = less frequent):
 
@@ -217,7 +217,9 @@ engine.submit({ confirm?: string[] });
 engine.confirm(gate: string): void;          // e.g. from an inline "I confirm" checkbox
 engine.unconfirm(gate: string): void;
 
-| { ok: false; reason: 'gated'; gates: Array<{ gate: string; policy: 'confirm' | 'block'; notices: Array<Notice & { path: DataPath }> }> }
+// submit() resolves with the SubmitResult union (09 §4); a gate stop is:
+//   { ok: false; reason: 'gated'; gates: GateStop[] }
+// GateStop = { gate: string; policy: 'confirm' | 'block'; notices: Array<Notice & { path: DataPath }> }
 ```
 
 - **One result for every gate.** `gates` lists each gate that stopped the submit, so the host can show one dialog with a section per gate. Errors are checked first: while there are errors, the result is `reason: 'errors'`.
@@ -266,6 +268,6 @@ registry.severities.register('x-legal',    { extends: 'warning', gate: 'legal', 
 - **Behaviour comes from the base.** `valid`, `firstInvalid`, `aria-invalid`, live regions, and the controller `errors` handle (base `error`) all use `extends`. Blocking does too: `error`-based severities always block, `info`-based never do, and `warning`-based ones block per their **gate** (§7.3). A `warning`-based severity may name its own `gate` (default `warnings`). `gate` on an `error`- or `info`-based severity is `E_SEVERITY_GATE`. Gate names are free strings; `warnings` is the built-in gate.
 - **Order.** Severities sort by base (`error > warning > info`), then by `rank` within the base (core severities have rank 0; equal rank sorts as equal). "Strongest wins" in `feedback`, plus the field and form `severity`, use this order. So `x-critical` hides plain errors in `feedback`, and `x-success` shows only when no plain `info` is present.
 - **Counts.** `FormState.counts` stays keyed by base (`error`, `warning`, `info`), so `counts.error > 0` keeps meaning "something blocks". Custom severities are also counted individually in `counts.custom`.
-- **Sources.** Any place that accepts a severity accepts a registered custom one: rules, validator results, async sources, `report`/`onValidate`, and external errors. An unknown severity from outside the contract (external errors, async sources, component notices) is treated as `error` (fail closed) and reported with `W_UNKNOWN_SEVERITY`.
+- **Sources.** Any place that accepts a severity accepts a registered custom one: rules, validator results, async sources, `report`/`onValidate`, and external errors. An unknown severity from outside the contract (external errors, async sources, custom validator results, `report`/`onValidate` component notices) is treated as `error` (fail closed) and reported with `W_UNKNOWN_SEVERITY`.
 - **Renderers** receive the actual name (`notice.severity === 'x-success'`) and style it. A renderer that doesn't know a name styles it as its base, via `severityBase(name)` on the engine.
 - `x-success` is the expected common case. It doesn't contradict §7: "valid" stays derived state, and an `x-success` notice appears only where a rule explicitly produces one.
