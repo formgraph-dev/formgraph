@@ -58,7 +58,7 @@ if (result.ok) {
 
 `revision` (core, [03 §7](./03-state-model.md#7-engine-write-api-core)) bumps on any commit that changes `current`, `rows` or `stash`, whatever its origin (user edits, host writes, effects, undo, reset, reload), because all of them change what the draft must contain. `savedRevision` only moves when a `put` succeeds, so a failed save leaves the form marked unsaved. The save status lives in host state. A step-based draft saves after `if ((await wiz.next()).ok)` instead ([11 §5](./11-rendering-and-adapters.md#5-wizards)).
 
-Only a reconciled success with no unsent work closes/unmounts the editor. `pendingChanges` includes serializer-excluded edits retained from before submit as well as deferred resolved/default/computed changes; a fresh comparison against `savedRevision` catches subsequent revision writes. Remaining work keeps the live editor and autosave subscription. For `response: 'failed'`, retain the result and retry `engine.reconcileSubmit(result.reconciliationId)` (optionally with a refetched entity), not submit or plain preserve-edits reload: reconciliation clears the already-acknowledged snapshot and preserves only excluded/later edits. Recheck its returned pending-work/revision fields before closing. To keep editing after a clean save, start a fresh engine/autosave session after draft deletion or use a pause/reattach flow. Do not reuse a disposed instance.
+Only a reconciled success with no unsent work closes/unmounts the editor. `pendingChanges` includes serializer-excluded edits retained from before submit as well as deferred resolved/default/computed changes; a fresh comparison against `savedRevision` catches subsequent revision writes. Remaining work keeps the live editor and autosave subscription. For `response: 'failed'` (a later `submit()` returns `reason: 'reconcile-pending'` until this succeeds), retain the result and retry `engine.reconcileSubmit(result.reconciliationId)` (optionally with a refetched entity), not submit or plain preserve-edits reload: reconciliation clears the already-acknowledged snapshot and preserves only excluded/later edits. Recheck its returned pending-work/revision fields before closing. To keep editing after a clean save, start a fresh engine/autosave session after draft deletion or use a pause/reattach flow. Do not reuse a disposed instance.
 
 ## 2. Form-level variables
 
@@ -351,13 +351,12 @@ const registry = coreRegistry.extend().fieldType('x-grid', {   // typed: contrac
   empty:  { columns: [], rows: [] },
   isEmpty: (g) => g.rows.length === 0,                    // `required` = at least one row, whatever the columns
   payloadSchema: { type: 'object', properties: { columns: { type: 'array' }, rows: { type: 'array' } } },
-});
-
-// Engine-side rule on the whole value, pointing at cells with subPath
-registry.validators.register('grid-qty-positive', {
-  validate: (g: GridValue) => g.rows.flatMap((r, i) =>
-    typeof r.qty === 'number' && r.qty <= 0 ? [{ subPath: `/rows/${i}/qty`, message: 'Must be positive' }] : []),
-});
+})
+  // Engine-side rule on the whole value, pointing at cells with subPath (typed registration, so defineContract sees it)
+  .validator('grid-qty-positive', {
+    validate: (g: GridValue) => g.rows.flatMap((r, i) =>
+      typeof r.qty === 'number' && r.qty <= 0 ? [{ subPath: `/rows/${i}/qty`, message: 'Must be positive' }] : []),
+  });
 ```
 
 ```json

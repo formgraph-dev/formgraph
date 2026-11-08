@@ -78,6 +78,7 @@ After a successful submit, a returned entity advances the baseline through ackno
 ```
 engine.submit():                  // submit({ confirm?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitResult>
   if a submit is in flight → return its promise (no second run, no error)
+  if a failed-response reconciliation is pending (§4.2) → return { ok:false, reason:'reconcile-pending', reconciliationId }   // no count, lock, hooks or save
   submitCount++; start deadline/cancellation race (§4 below); clear lastSubmitError
   await ready without changing initialization's loading/error phase; readiness failure → fail('load')
   phase=submitting
@@ -130,6 +131,7 @@ type SubmitSuccess =
   | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[]; reconciliationId: string };
 type SubmitResult = SubmitSuccess
   | { ok: false; reason: 'load' | 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
+  | { ok: false; reason: 'reconcile-pending'; reconciliationId: string }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
   | { ok: false; reason: 'gated'; gates: GateStop[] }
   | { ok: false; reason: 'cancelled' | 'timeout'; outcome: 'not-sent' | 'unknown' }
@@ -177,6 +179,8 @@ The frozen checkpoint contains resolved values, all current overrides, row ident
 
 **Final coverage is explicit across a transform.** `SubmitTargetResult.acknowledgedPaths` names the exact frozen units actually persisted. Without an outbound transformer it may be omitted (defaults to `serializedPaths`) or restrict that set. With a transformer it is required, including when no entity is returned: the host target/transformer pair must attest which form inputs contributed to the accepted payload. It may name a known field intentionally added from full form values, but must not claim an input the transformer removed. Validate all units against the frozen schema; custom subPaths, unknown paths and group/wildcard claims are invalid. Missing required/invalid coverage retains all edits and returns `response: 'failed'` with `E_SUBMIT_RESPONSE` and a reconciliation id, even if the save succeeded. Correct metadata through `reconcileSubmit(id, { acknowledgedPaths })`, never by repeating the save. This is a trusted host integration contract, not inferred backend persistence or a contract-controlled security claim.
 
+**No entity: acknowledged value.** Without an entity the `loaded` layer is stale for covered paths. Core therefore records a bounded, runtime-only *acknowledged value* for each covered path (the frozen value; arrays and custom fields atomic) and uses it, instead of `loaded`, for dirty and `patch` comparisons of that path. A field saved as `B` over loaded `A` and then edited back to `A` is still dirty, and a later patch resends `A`; `revert`/`reset` still restore `loaded` and remain dirty relative to the acknowledgement. The record is not part of drafts or SSR state and is cleared by any entity-bearing acknowledgement, load/reload that replaces the layer, reset, restore, or external update to that path. It is a claim about what was sent, not about server normalization; hosts that need the server's value should return an entity or refetch.
+
 Coverage acknowledges the **captured values/intents**, not future values at those paths. A later edit to an acknowledged field is still unsent. If coverage is corrected without any entity (retained or supplied), do not replace the baseline or delete covered current overrides: only classify the accepted snapshot, preserving the existing no-entity behavior. Return the original saved revision token and mark uncovered or post-capture work pending. Supplying an entity enables actual baseline reconciliation and captured-override removal; neither form can erase later edits just because their paths were acknowledged earlier.
 
 For example, if a transformer removes `privateNote`, its target returns `acknowledgedPaths: serializedPaths.filter(p => p !== 'privateNote')`. A returned entity with the old note cannot then erase the edited note or make draft cleanup appear safe. Exact units matter for arrays: acknowledging an array's topology does not acknowledge a cell omitted by the transformer.
@@ -194,7 +198,7 @@ engine.reconcileSubmit(reconciliationId: string, opts?: {
 }): Promise<SubmitReconciliation>;   // no target call; defaults to retained entity/coverage, which may be corrected explicitly
 ```
 
-The opaque id belongs to this engine's current pending acknowledgement. A newer accepted submit, successful explicit host reload/reset/restore, unrelated contract replacement or disposal invalidates it (`E_RECONCILE_UNAVAILABLE`); ordinary external updates instead rebase it as above. A failed/staged host load does not itself expire recovery. Calls during submit reject with `E_SUBMIT_BUSY`; overlapping reconciliation calls use latest-wins (`E_SUPERSEDED`). Failure/interruption rejects the **call promise** with `E_SUBMIT_RESPONSE` and diagnostics, keeping live state and the same id/checkpoint; it does not return another `SubmitSuccess` or create a new id. A successful commit consumes the id and returns revision/pending-work metadata, including uncovered edits. Staging shares cancellation/deadline/generation guards. IDs/checkpoints are runtime-only, not draft/SSR data; after restart, use ordinary loading and explicit stale-draft handling instead of an expired id.
+The opaque id belongs to this engine's current pending acknowledgement. While it is pending, `submit()` refuses to run (`reason: 'reconcile-pending'`), so a later partial save cannot orphan the first acknowledgement or let uncovered local overrides mask a normalized server value. Only a successful `reconcileSubmit`, a successful explicit host reload/reset/restore, unrelated contract replacement or disposal invalidates it (`E_RECONCILE_UNAVAILABLE`); ordinary external updates instead rebase it as above. A failed/staged host load does not itself expire recovery. Calls during submit reject with `E_SUBMIT_BUSY`; overlapping reconciliation calls use latest-wins (`E_SUPERSEDED`). Failure/interruption rejects the **call promise** with `E_SUBMIT_RESPONSE` and diagnostics, keeping live state and the same id/checkpoint; it does not return another `SubmitSuccess` or create a new id. A successful commit consumes the id and returns revision/pending-work metadata, including uncovered edits. Staging shares cancellation/deadline/generation guards. IDs/checkpoints are runtime-only, not draft/SSR data; after restart, use ordinary loading and explicit stale-draft handling instead of an expired id.
 
 ### Public building blocks
 

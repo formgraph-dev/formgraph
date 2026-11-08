@@ -140,6 +140,7 @@ type SubmitSuccess =                                           // 09 §4; savedR
   | { ok: true; response: 'failed'; savedRevision: number; pendingChanges: boolean; diagnostics: Diagnostic[]; reconciliationId: string };
 type SubmitResult = SubmitSuccess
   | { ok: false; reason: 'load' | 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
+  | { ok: false; reason: 'reconcile-pending'; reconciliationId: string }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
   | { ok: false; reason: 'gated'; gates: GateStop[] }           // GateStop: 09 §4
   | { ok: false; reason: 'cancelled' | 'timeout'; outcome: 'not-sent' | 'unknown' }
