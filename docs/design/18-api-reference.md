@@ -116,7 +116,8 @@ interface FormEngine<V = Json, Paths extends string = string, Payload = Json> { 
   serialize(opts?: { mode?: 'full'; validate?: boolean }): Payload;   // throws E_INVALID with validate (09 §4)
   serialize(opts: { mode: 'patch'; validate?: boolean }): PatchOf<Payload>;   // optional object paths, whole arrays
   serialize(opts: { mode: 'full' | 'patch'; validate?: boolean }): Payload | PatchOf<Payload>;
-  submit(opts?: { confirm?: string[] }): Promise<SubmitResult>;  // 09 §4; confirm: gates to confirm first (06 §7.3); while one is in flight, returns that same promise
+  submit(opts?: { confirm?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitResult>;  // 09 §4; first call's controls govern the shared promise
+  cancelSubmit(): void;                                        // cancels even non-cooperative work; no-op when idle (09 §4)
   confirm(gate: string): void;                                  // 06 §7.3; valid while the gate's notices stay a subset of those confirmed
   unconfirm(gate: string): void;
   mapExternalErrors(errors: ExternalErrors): void;              // 09 §5
@@ -136,6 +137,7 @@ type SubmitResult =                                             // 09 §4
   | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
   | { ok: false; reason: 'gated'; gates: GateStop[] }           // GateStop: 09 §4
+  | { ok: false; reason: 'cancelled' | 'timeout'; outcome: 'not-sent' | 'unknown' }
   | { ok: false; reason: `x-${string}`; notices?: NoticeInput[] };   // plugin before-hook stop
 
 type ReloadPolicy = 'preserve-edits' | 'replace-unchanged' | 'replace';   // 09 §3

@@ -79,6 +79,7 @@ type DiagnosticPhase = typeof DIAGNOSTIC_PHASES[number];
 | `E_UNKNOWN_MACRO` | expand | `macro` id not registered | [15 §2](./15-macros.md#2-contract) |
 | `E_MACRO_ARGS` | expand | Macro arguments fail the macro's `args` schema | [15 §3](./15-macros.md#3-definition) |
 | `E_MACRO_NESTED` | expand | Expansion output contains a macro node | [15 §5](./15-macros.md#5-rules) |
+| `E_MACRO_ITEM_ARITY` | expand | A macro in an array item slot produced zero/multiple nodes; wrap siblings in an explicit group | [15 §5](./15-macros.md#5-rules) |
 | `E_MACRO_ID_COLLISION` | expand | Ids collide within one expansion (including `ctx.expand` calls and a repeated `uniqueId` hint); cross-node collisions are `E_DUPLICATE_DATA_KEY` with `location.source` | [15 §5](./15-macros.md#5-rules) |
 | `E_MACRO_DUPLICATE_VALUE` | expand | `hierarchy`: duplicate sibling value, or duplicate value across a level below a multi-select | [15 §7.1](./15-macros.md#71-hierarchy) |
 | `E_MACRO_SEPARATOR` | expand | `hierarchy`: a value contains `keySeparator` | [15 §7.1](./15-macros.md#71-hierarchy) |
@@ -139,8 +140,9 @@ type DiagnosticPhase = typeof DIAGNOSTIC_PHASES[number];
 | `E_SNAPSHOT_INVALID` | call | Snapshot fails shape validation | [09 §8.2](./09-loading-and-submission.md#82-restore-rules) |
 | `E_RESTORE_BUSY` | call | `restore` called while `phase` is `submitting` | [09 §8.2](./09-loading-and-submission.md#82-restore-rules) |
 | `E_SUBMIT_BUSY` | call | Value/row mutation or host reload attempted during the submit edit lock; no write is applied | [09 §4](./09-loading-and-submission.md#4-submission-pipeline) |
+| `E_ROW_BASELINE_UNKNOWN` | call | Descendant revert cannot identify an old row against a changed baseline; resolve the whole-array conflict instead of guessing an index | [03 §3.2](./03-state-model.md#32-atomic-array-writes) |
 | `E_SUBMIT_TARGET` | runtime | Submit target threw/rejected; original error stored in lastSubmitError, submit returns reason target, finalization drains queued updates | [09 §4](./09-loading-and-submission.md#4-submission-pipeline) |
-| `E_SUPERSEDED` | call | A pending `reload`/`restore` was superseded by a later call; it writes nothing | [09 §3](./09-loading-and-submission.md#3-reload-policy) |
+| `E_SUPERSEDED` | call | A pending reload/restore was superseded by a later call, or a restore's captured baseline/live-value generation changed during staging; it writes nothing | [09 §3](./09-loading-and-submission.md#3-reload-policy) |
 | `E_UNDEFINED_VALUE` | call | `setValue` given `undefined`; use the empty value or `revert` | [03 §3](./03-state-model.md#3-precedence-by-presence-not-nullishness) |
 | `E_PLUGIN_MISSING` | call / compile / runtime | Names the plugin and its import. *call*: missing plugin method/dependency, or an engine formatter override lacks syntax support (*throws*). *compile*: the contract needs unsupported ICU syntax or assets. *runtime*: a locale bundle needs unsupported ICU syntax; that key falls through. Custom formatters passed to loading supply their own syntax checker | [03 §8](./03-state-model.md#8-plugins) |
 | `E_PLUGIN_DUPLICATE` | call | Two plugins with the same `name` recorded in one registry (*throws*) | [03 §8.1](./03-state-model.md#81-plugin-api) |

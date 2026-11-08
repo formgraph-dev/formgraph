@@ -44,12 +44,15 @@ const offRevision = engine.revision.subscribe((rev) => {
 if ((await engine.submit()).ok) {
   stopped = true; again = false;
   offRevision(); debouncedSave.cancel();        // stop scheduling and cancel any pending debounce
+  engine.dispose();                            // this recipe exits the editing flow after a successful submit
   await saving?.catch(() => {});               // an older put must settle before deletion
   await drafts.delete(formKey);                // no late put can recreate the submitted draft
 }
 ```
 
 `revision` (core, [03 §7](./03-state-model.md#7-engine-write-api-core)) bumps on any commit that changes `current`, `rows` or `stash`, whatever its origin (user edits, host writes, effects, undo, reset, reload), because all of them change what the draft must contain. `savedRevision` only moves when a `put` succeeds, so a failed save leaves the form marked unsaved. The save status lives in host state. A step-based draft saves after `if ((await wiz.next()).ok)` instead ([11 §5](./11-rendering-and-adapters.md#5-wizards)).
+
+This success branch closes/unmounts the editor; it does not leave a live form with autosave detached. To keep editing after save, start a fresh engine/autosave session after draft deletion, or pause scheduling only for the delete/drain sequence and reattach it before re-enabling editing. Do not reuse the disposed instance.
 
 ## 2. Form-level variables
 
@@ -136,7 +139,10 @@ try {
   await rowEngine.reload({ entity: rowValue });  // row value becomes `loaded`, so dirty works
   // … show editor and await the user's save decision …
   if ((await rowEngine.validate()).ok) {
-    if (!rows.rows.get().includes(key)) throw new Error('Row was removed while editing');
+    const currentIndex = rows.rows.get().indexOf(key);
+    if (currentIndex < 0) throw new Error('Row was removed while editing');
+    const currentRow = engine.getValues(`addresses[${currentIndex}]` as DataPath);
+    if (!deepEqual(currentRow, rowValue)) throw new Error('Row changed while editing: reopen or merge before saving');
     rows.set(key, rowEngine.getValues());        // same row after reorders; values, not serialized payload
   }
 } finally { rowEngine.dispose(); }
@@ -144,6 +150,8 @@ try {
 ```
 
 **Limitation:** `../` and `/` references inside the row can't reach the parent form. Pass the parent values the row needs through `context` (and refer to them as `$context.parent.x`), or use inline editing.
+
+`deepEqual` is a host equality helper (for example `dequal`, as in §17). A changed row is an explicit conflict: this example refuses to overwrite it; the host must reopen the editor on the new row or merge and validate the result. Identity lookup, comparison and `rows.set` have no intervening await.
 
 ## 8. View mode / read-only review page
 
@@ -400,7 +408,8 @@ Embedding a whole, separately owned form (another formgraph contract, or a forei
 
 ```ts
 const toPointer = (p: string) => '/' + p.replace(/\[(\d+)\]/g, '.$1').split('.').join('/');
-type SubformBridge = { child: FormEngine | null; error?: string };
+const errorCode = (e: unknown) => e !== null && typeof e === 'object' && 'code' in e ? e.code : undefined;
+type SubformBridge = { child: FormEngine | null; error?: string; ready?: Promise<void>; publish?: () => void };
 const subformBridges = new WeakMap<FieldController, SubformBridge>();
 
 // Install the fail-closed guard when the controller is created, before a renderer can mount.
@@ -410,11 +419,20 @@ const subformLifecycle = definePlugin('x-subform-lifecycle', {
     ctx.controllers.extend(c => {
       const bridge: SubformBridge = { child: null };
       subformBridges.set(c, bridge);
-      const off = c.onValidate('subform', async () => {
+      const off = c.onValidate('subform', async ({ signal }) => {
+        while (bridge.ready) {
+          const ready = bridge.ready;
+          await ready;                               // includes bridge installation, not only the child's load phase
+          if (signal.aborted) return null;
+          if (bridge.ready === ready) break;          // a newer reseed supersedes the awaited one
+        }
         if (!bridge.child) return [{ message: bridge.error ?? 'Subform is not ready.' }];
-        const { notices } = await bridge.child.validate({ trigger: 'submit' });
+        const child = bridge.child;
+        const { notices } = await child.validate({ trigger: 'submit' });
+        if (signal.aborted || bridge.child !== child) return null;   // obsolete validation cannot publish
+        bridge.publish?.();                          // settle + synchronize while parent preflight is still unlocked
         return notices.length ? notices.map(n => ({
-          message: n.message, severity: n.severity, code: n.code, subPath: toPointer(n.path),
+          message: n.message, severity: child.severityBase(n.severity), code: n.code, subPath: toPointer(n.path),
         })) : null;
       });
       return { members: {}, dispose() { off(); subformBridges.delete(c); } };
@@ -436,6 +454,7 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
   const parent = useFormEngine();
   const [child, setChild] = useState<FormEngine | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  const [reloading, setReloading] = useState(false);
   const submitting = useReadable(parent.form.select('phase')) === 'submitting';
 
   // Create once per contract; seed from the parent's value; dispose on unmount
@@ -452,7 +471,7 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
     const abort = () => { request.abort(); engine?.dispose(); };
     parent.signal.addEventListener('abort', abort, { once: true });
     const stale = () => cancelled || parent.signal.aborted;
-    void (async () => {
+    const initialization = (async () => {
       try {
         const json = await fetchJson(node.contractUrl, { signal: request.signal });
         if (stale()) return;
@@ -466,30 +485,75 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
         if (stale()) { e.dispose(); return; }
         await e.ready;
         if (stale()) { e.dispose(); return; }
-        await e.reload({ entity: controller.value.get() ?? {}, policy: 'replace' });
-        if (stale()) { e.dispose(); return; }
-        let pushed: Json = controller.value.get();
+        let seed: Json;
+        do {                                         // parent may change while the initial reload is pending
+          seed = controller.value.get();
+          await e.reload({ entity: seed ?? {}, policy: 'replace' });
+          if (stale()) { e.dispose(); return; }
+        } while (!deepEqual(controller.value.get(), seed));
+        let pushed: Json = seed;                      // the actual loaded value, never a newer unread parent value
+        let deferredChild: Json | undefined;
+        let reseedGeneration = 0;
+        let reseeding = false;
+        const publishValue = (next: Json) => {
+          if (stale()) return;
+          if (deepEqual(next, controller.value.get())) { deferredChild = undefined; return; }
+          const previous = pushed; pushed = next;     // suppress the echo only for this exact accepted write
+          try { controller.setValue(next); deferredChild = undefined; }
+          catch (error) {
+            pushed = previous;
+            if (errorCode(error) === 'E_SUBMIT_BUSY') deferredChild = next;   // after snapshot lock: subsequent edit
+            else throw error;
+          }
+        };
+        const reseed = (v: Json) => {
+          const run = async () => {
+            const generation = ++reseedGeneration;
+            reseeding = true; setReloading(true); bridge.child = null;
+            try {
+              await e.reload({ entity: v ?? {}, policy: 'replace' });
+              if (stale() || generation !== reseedGeneration) return;
+              pushed = v; bridge.child = e; bridge.error = undefined;
+              controller.report('subform:reload', null);
+            } catch (error) {
+              if (stale() || generation !== reseedGeneration || errorCode(error) === 'E_SUPERSEDED') return;
+              bridge.child = null; bridge.error = 'Subform could not be reloaded.';
+              controller.report('subform:reload', [{ message: bridge.error }]);
+            } finally {
+              if (!stale() && generation === reseedGeneration) { reseeding = false; setReloading(false); }
+            }
+          };
+          const ready = run();
+          bridge.ready = ready;
+          return ready;
+        };
         const syncBusy = () => controller.setBusy('subform:work', e.form.get().validating || e.form.get().phase === 'loading');
         offs.push(
           // 1. Value: child → parent. One parent write per child commit
           e.revision.subscribe(() => {
-            if (stale()) return;
-            pushed = e.serialize({ mode: 'full' });
-            controller.setValue(pushed);
+            if (stale() || reseeding) return;          // reload/undo/replay must not create a new parent user edit
+            publishValue(e.serialize({ mode: 'full' }));
           }),
           // 2. Value: parent → child, for reset, undo, reload and restore
           controller.value.subscribe((v) => {
-            if (v !== pushed) void e.reload({ entity: v ?? {}, policy: 'replace' }).catch(() => {
-              if (!stale()) { bridge.child = null; bridge.error = 'Subform could not be reloaded.'; }
-            });
+            if (!deepEqual(v, pushed)) void reseed(v);
           }),
           // 3. Busy: the child's async validation and loads hold the parent's gate
           e.form.subscribe(syncBusy),
           // 4. Validation is already guarded by subformLifecycle; publish after setup.
           // 5. Locale follows the parent
           parent.form.select('locale').subscribe((l) => { void e.setLocale(l); }),
+          parent.form.select('phase').subscribe(phase => {
+            if (phase !== 'submitting' && deferredChild !== undefined) {
+              const next = deferredChild;
+              publishValue(next);                     // lock released; preserve late child edits after response/reload
+              void reseed(next);                     // response reseeding may have superseded the displayed child
+            }
+          }),
         );
         syncBusy();
+        bridge.publish = () => { if (!reseeding) publishValue(e.serialize({ mode: 'full' })); };
+        bridge.publish();                            // publish initialized defaults even when the parent started null
         bridge.child = e;                             // all bridges are installed before opening the parent gate
         controller.report('subform', null);           // clear any earlier not-ready finding from the guard
         controller.setBusy('subform:init', false);
@@ -505,11 +569,12 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
         engine?.dispose();
       }
     })();
+    bridge.ready = initialization;
     return () => {
       cancelled = true;
       parent.signal.removeEventListener('abort', abort);
       abort(); offs.forEach(off => off());
-      bridge.child = null;                           // persistent validation guard closes again
+      bridge.child = null; bridge.ready = undefined; bridge.publish = undefined; // validation guard closes again
       controller.setBusy('subform:init', false);
       controller.setBusy('subform:work', false);
     };
@@ -520,14 +585,14 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
   useEffect(() => {
     const external = feedback.filter(m => m.source === 'external' && m.subPath);
     if (child && external.length) child.mapExternalErrors(external.map(m => ({
-      path: m.subPath!, message: m.message, code: m.code, severity: m.severity })));
-  }, [child, feedback]);
+      path: m.subPath!, message: m.message, code: m.code, severity: parent.severityBase(m.severity) })));
+  }, [child, feedback, parent]);
 
   if (initError) return <p role="alert">{initError}</p>; // host may remount to retry
   if (!child) return <Spinner />;
   return (
     <FormProvider engine={child}>
-      <fieldset disabled={submitting}><FormRenderer renderers={childRenderers} /></fieldset>
+      <fieldset disabled={submitting || reloading}><FormRenderer renderers={childRenderers} /></fieldset>
       {/* the parent's own messages for this field, but not the per-path ones the child already shows */}
       <FieldMessages messages={feedback.filter(m => !m.subPath)} />
     </FormProvider>
@@ -547,7 +612,9 @@ What each bridge gives you:
 | Locale | `setLocale` follows the parent | One language switch for both |
 
 Things to know:
-- **Initialization.** The lifecycle plugin installs the validation guard before rendering (including when submit lazily creates the controller). Until every bridge is installed, validation fails closed and the renderer's initialization token holds pending work. Failed creation reports an error; unmount closes the guard, aborts requests, releases tokens and disposes any engine that arrives late. Keep `childRegistry` and `hostContext` references stable. Native renderers use their own non-editable container while the parent submits, rather than HTML `fieldset`.
+- **Initialization.** The lifecycle plugin installs the validation guard before rendering (including when submit lazily creates the controller). Until every bridge is installed and the initialized child value is published, validation fails closed and the initialization token holds pending work. The seed/recheck loop catches parent changes during async setup. Failed creation reports an error; unmount closes the guard, aborts requests, releases tokens and disposes any engine that arrives late. Keep `childRegistry` and `hostContext` references stable. `deepEqual` is the host comparator from §17. Native renderers use a non-editable container while the parent submits/reseeds, rather than HTML `fieldset`.
+- **Submit synchronization.** Parent preflight stays unlocked while `onValidate` settles the child and publishes its latest output. Any resulting parent value change restarts full parent validation before snapshot capture ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). A child completion after that lock is a subsequent edit: the listener catches `E_SUBMIT_BUSY`, buffers the value and publishes only after finalization unlocks, then reseeds if a response reload changed the child. It never throws a lock error from a subscription or mutates the captured payload. Applications may instead pause all child-originated work for the frozen-snapshot interval.
+- **Severity boundary.** This isolated-registry example maps child notices through `child.severityBase`, preserving info/warning/error instead of upgrading unknown `x-` severities to errors. To preserve custom ranks or legal-gate semantics, share compatible registrations or provide an explicit child-to-parent severity mapping; never forward unknown severity names blindly.
 - **Undo.** Each child commit is a parent write, so the parent's history records it (coalesced per `coalesceMs`). Undo restores the value and re-seeds the child through bridge 2. Leave history off the child to avoid two undo stacks.
 - **Re-seeding resets the child's meta.** A `replace` reload after undo or reset clears the child's touched state. That's usually what you want. If you need to keep it, compute the diff and use `child.applyExternal` instead.
 - **No cross-references.** The parent sees the child's output only as one opaque value. Parent rules and functions can inspect it, but parent paths can't point inside it, and the child can't see the parent except through `context`. If you need more than that, use a dynamic sub-form.
@@ -570,7 +637,13 @@ function withDirty<P extends { controller: FieldController<any> }>(Inner: Compon
       <div className="field" data-dirty={dirty || undefined}>
         <Inner {...props} />
         {dirty && (
-          <button type="button" onClick={() => c.revert()} aria-label="Undo change">
+          <button type="button" onClick={() => {
+            try { c.revert(); }
+            catch (error) {
+              if (errorCode(error) === 'E_ROW_BASELINE_UNKNOWN') announce('Review or revert the whole array; this row cannot be matched to its new baseline.');
+              else throw error;
+            }
+          }} aria-label="Undo change">
             <span aria-hidden>●</span>
           </button>
         )}
@@ -601,6 +674,7 @@ The renderer prop types are kept, since `withDirty` returns the same props as th
 Notes:
 - **What "dirty" means.** It compares with the baseline (loaded value, else default), not with the last keystroke. Typing a value back to the original clears the dot. Custom types compare with their `equals`.
 - **`revert()`** restores only the targeted field's baseline. Outside arrays it drops the key from `current`; inside arrays it reconstructs the atomic array with that one field restored by row identity, preserving edits in other rows/cells ([03 §3.2](./03-state-model.md#32-atomic-array-writes)). It's a host write, so it's undoable when history is on ([03 §6.2](./03-state-model.md#62-undo--redo-opt-in)) and effects run as usual.
+- **Stale array identity.** The button catches `E_ROW_BASELINE_UNKNOWN` instead of guessing a row. `errorCode` is the helper from §22; `announce` is the host's accessible status-message helper. Accepting an external whole array or reverting that array restores known identity; accepting local values alone does not.
 - **Computed fields.** Non-overridable computed fields are never dirty, so they never show the dot. Hide the button for disabled or read-only fields if reverting shouldn't be offered there.
 - **After submit.** If the submit target returns `entity`, the engine reloads with `replace`, which moves the baseline, so the dots clear on their own ([09 §4](./09-loading-and-submission.md#4-submission-pipeline)). Without `entity`, fields stay dirty until you reload.
 - **Accessibility.** Don't rely on the dot alone: give the button a text label, and announce the state with visually hidden text (for example "changed") if it matters to users.

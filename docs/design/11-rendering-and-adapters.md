@@ -373,7 +373,7 @@ createFormEngine({ …, idPrefix: 'checkout' });   // optional; see below
   |----------|---------|
    | `errors`, `external`, `conflicts`, `schema` | focus `firstInvalid()`: the field itself, or for a group/array its first focusable child, else the container's own registered element. Nothing focusable → no-op; the failure stays in the result |
   | `gated`, `validating`, `assets-pending` | nothing (the host shows its own confirm/progress UI) |
-   | `transform`, `target`, `x-…` | nothing (the host shows failure/retry UI; diagnostics where applicable) |
+   | `transform`, `target`, `cancelled`, `timeout`, `x-…` | nothing (the host shows failure/cancellation UI; unknown target outcomes require reconciliation before retry) |
 
   Passing your own `onSubmitFailed` replaces the default.
 

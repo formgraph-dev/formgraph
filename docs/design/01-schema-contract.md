@@ -442,7 +442,17 @@ The contract package exports **two** sets of types:
 | Macro nodes | allowed anywhere a node is (`MacroNode`, 15 §2) | none |
 | Short forms | bare `options` array, bare `string` text (15 §6) | expanded |
 
-`InputNode = Field | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode`, using the generic container types above. `DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `FormContract` with `structure: InputNode[]` and the short forms of 15 §6 allowed. `expandContract(input, { macros }) → { contract, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
+Input fields, unlike normalized fields, accept option-array shorthands recursively:
+
+```ts
+type InputFieldOf<F> = F extends { fieldType: 'choice' | 'multi-choice' }
+  ? Omit<F, 'options'> & { options?: OptionsSource | SelectOption[] }
+  : F;
+export type InputField = InputFieldOf<Field>;   // distributive over the Field union; custom fields unchanged
+export type InputNode = InputField | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode;
+```
+
+`DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `Omit<FormContract, 'structure'> & { structure: InputNode[] }`; the published input JSON Schema is generated from these input-specific types. The normalized `Field`/`Node` types remain unchanged. A macro in an array's single `item` slot must expand to exactly one non-content node, not a list of siblings ([15 §5](./15-macros.md#5-rules)). `expandContract(input, { macros }) → { contract, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
 
 ## 6. Document
 

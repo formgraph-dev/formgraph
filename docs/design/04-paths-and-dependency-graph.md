@@ -63,6 +63,7 @@ Internally, the engine uses absolute data paths and row key paths ([§1](#1-thre
 
 - Each row gets a `RowKey` (a short monotonic id, `#k1`, `#k2`, …) when it enters state (from defaults, loading, insert, or replace).
 - `meta.rows[arrayDataPath]: RowKey[]` runs parallel to the array value.
+- `meta.baselineRows[arrayRowKeyPath]: BaselineRowKeys` independently records baseline order, unresolved-old-row provenance and nested row associations ([03 §3.2](./03-state-model.md#32-atomic-array-writes)). It does not follow current reorders/inserts and is persisted in drafts/resume state.
 - `move`/`remove` update both the value array (in `current`) and the key list together in one batch.
 - Errors and meta are keyed by row key path, so reorders don't move errors to the wrong row.
 - Adapters use the `RowKey` as the framework list key.

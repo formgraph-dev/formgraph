@@ -20,6 +20,7 @@ The `FormStore` snapshot is divided into **slices**. Three of them are value **l
 | Sub-structure | Contents | Undoable ([§6.2](#62-undo--redo-opt-in)) |
 |---------------|----------|----------|
 | `meta.rows[arrayPath]` | Row keys of each array ([§3.2](#32-atomic-array-writes)) | yes |
+| `meta.baselineRows[arrayRowKeyPath]` | Baseline-position → row-key map and unresolved-old-row keys, including nested arrays; independent of current order/inserts | no (follows the baseline) |
 | `meta.stash` | Dynamic-group orphans kept by `orphanPolicy: 'stash'` ([08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)) | yes |
 | `meta.conflict[p]` | Open conflicts ([09 §7.2](./09-loading-and-submission.md#72-resolving)) | no |
 | `meta.touched[p]`, `meta.visited[p]` | Interaction flags ([§5](#5-field-meta-and-form-status)) | no |
@@ -212,7 +213,18 @@ Writing `addresses[1].city` when `current` has no `addresses`:
 
 From then on, `addresses` comes entirely from `current`. Reloading interacts with this through the policy in [09 §3](./09-loading-and-submission.md#3-reload-policy).
 
-Atomic storage does not widen the target of a command. `revert` or an effect's `reset` on an array descendant restores only that target in a cloned resolved array, preserving other rows and cells. Baseline rows are matched by row key, never by their current index; a new row with no baseline uses its field defaults. The whole `current` array override is removed only if the resulting array equals its baseline. Targeting the array itself still reverts or resets the whole array ([07 §2](./07-effects-and-computed.md#2-write-origins-and-effect-triggers)).
+Atomic storage does not widen the target of a command. `revert` or an effect's `reset` on an array descendant restores only that target in a cloned resolved array, preserving other rows and cells. Baseline rows are matched through `meta.baselineRows`, never by current index; a genuinely inserted row uses field defaults. A descendant operation **keeps** the enclosing `current` array override even if its value now equals the baseline: equality controls dirty state, not presence. Only an explicit whole-array `revert`, `reset`/reload policies that clear overrides, or conflict resolution can remove it. Thus `preserve-edits` keeps an explicit same-valued array just as it keeps an explicit same-valued scalar ([07 §2](./07-effects-and-computed.md#2-write-origins-and-effect-triggers)).
+
+`meta.baselineRows` maps each baseline array's positions to stable keys; nested array instances are addressed by enclosing row keys, not indexes:
+
+```ts
+interface BaselineRowKeys {
+  keys: RowKey[];                  // positions in the current baseline array
+  unresolved?: RowKey[];           // formerly baseline rows that cannot be matched after a baseline change
+}
+```
+
+It is created with defaults/loading, updated when the baseline changes, and is not reordered or extended when current rows move or are inserted. Drafts and SSR persist it alongside current row keys ([09 §8](./09-loading-and-submission.md#8-snapshots-drafts), [09 §9](./09-loading-and-submission.md#9-server-rendering)). On an unchanged baseline, restore reinstates saved associations, so reordered old rows and new rows remain distinguishable without `identityKey`. A changed baseline without reliable identity never uses guessed indexes: old baseline keys move to `unresolved`, and descendant revert rejects with `E_ROW_BASELINE_UNKNOWN`. A key in neither list is a genuinely inserted row and uses defaults. Persisting unresolved provenance prevents a second draft save/restore from misclassifying an old row as new. Accept the external whole array or explicitly revert the whole array to recover known associations. Choosing `local` or `keep-draft` keeps unresolved markers: dismissing a conflict cannot invent row identity.
 
 Row keys (see [04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity)) are stored in a parallel structure, `meta.rows[arrayPath]: RowKey[]`, never inside the user data.
 
@@ -359,7 +371,7 @@ Writes through this API get origin `host`. Renderers write through `FieldControl
 
 **`reset`** is one tick with origin `reset` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). It:
 - clears `current`, `notices`, `meta.touched`, `meta.visited`, `meta.stash`, and `meta.conflict`;
-- reassigns `meta.rows` from the resolved arrays (keys are kept for rows matched by `identityKey`, regenerated otherwise);
+- restores `meta.rows` from the known baseline row-key maps when clearing `current`; with `keepLoaded: false`, rebuilds the default baseline's keys and associations together. It never leaves current keys pointing at a different baseline row;
 - with `keepLoaded: false`, also empties `loaded`, so values fall back to defaults (as for a new record);
 - has origin policy `history: 'clear'`.
 
@@ -422,7 +434,7 @@ type PluginStore<Name extends string = string> = BasePluginStore<`x-${string}`, 
 type PrivilegedPluginStore = BasePluginStore<CoreOrigin | `x-${string}`, AllSlices>;                // built-ins
 
 type CoreOrigin = keyof typeof ORIGIN_POLICY;                 // 07 §2.1: user, host, load, external, effect, reset, history, restore, …
-type CoreMetaKey = 'rows' | 'stash' | 'conflict' | 'touched' | 'visited' | 'field';   // the meta sub-structures in §1
+type CoreMetaKey = 'rows' | 'baselineRows' | 'stash' | 'conflict' | 'touched' | 'visited' | 'field';   // the meta sub-structures in §1
 
 type StoreReader = Pick<FormStore, 'snapshot' | 'select' | 'selectForm'>;   // §2.2: immutable snapshot (all slices) and Readable handles
 

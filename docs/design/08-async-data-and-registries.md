@@ -50,7 +50,7 @@ interface SourceCtx { signal: AbortSignal; context: Json; formId: string; locale
 type AsyncSource<I, O> = (input: I, ctx: SourceCtx) => O | Promise<O>;
 
 type EntitySource = AsyncSource<{ id: Json }, Json>;                                    // 09 §2
-interface SubmitTargetResult { errors?: ExternalErrors; entity?: Json }
+interface SubmitTargetResult { errors?: ExternalErrors; entity?: Json }   // errors: [] is equivalent to no errors; entity is still applied
 type SubmitTarget<P = Json> = AsyncSource<{ payload: P; mode: 'full' | 'patch'; confirmed: string[] }, SubmitTargetResult>; // 09 §4; distinct from the engine's SubmitResult; confirmed: gates the user confirmed (06 §7.3)
 ```
 
@@ -213,10 +213,10 @@ Lifecycle when the discriminator value changes:
 
 If attaching would exceed `limits.nodes` (counting attached sub-schemas only, [01 §7.4](./01-schema-contract.md#74-limits)), or the result fails any load step, the group gets `status: 'error'` with that diagnostic (e.g. `E_LIMIT_EXCEEDED`), and the previous sub-schema stays attached.
 
-Keeping the old schema is a display-only recovery measure: it does not match the new discriminator and cannot satisfy submission readiness. `submit()`, scoped `validate()` and wizard `next()` await schema loads in their eligible scope, then fail with `reason: 'schema'` (validation returns `ok: false` with a blocking group notice) if any selected schema is failed or mismatched. They never serialize the new discriminator with the old children. `DynamicGroupController.retry(): Promise<void>` retries the current discriminator through the same generation-checked pipeline; renderers expose it alongside the group's status/diagnostic. Switching back to a successfully cached discriminator also recovers.
+Keeping the old schema is a display-only recovery measure: it does not match the new discriminator and cannot satisfy submission readiness. `submit()`, scoped `validate()` and wizard `next()` await schema loads in their eligible scope, then install a blocking group notice and fail with `reason: 'schema'` (validation returns `ok: false` with that notice) if any selected schema is failed or mismatched. The notice is installed **before every failure returns**, including submit's pre-validation check, so `firstInvalid()` can focus the group; it clears on successful matching-schema attachment or discriminator recovery. They never serialize the new discriminator with the old children. `DynamicGroupController.retry(): Promise<void>` retries the current discriminator through the same generation-checked pipeline; renderers expose it alongside the group's status/diagnostic. Switching back to a successfully cached discriminator also recovers.
 
 **The graft is a trusted structural tick.** Steps 3–5 commit as one transaction that behaves like origin `reset` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): no effects and no cascade invalidation run for the removed or defaulted values (the new children start from their own defaults, so there is nothing to invalidate). Computed values, conditions, and option sources of the new children are evaluated normally.
 
 **History.** The graft commit carries the history flag `clear` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). The earlier discriminator write was a normal recorded step, but replaying it can't bring back a sub-schema whose values were already discarded from every layer.
 
-The same mechanism handles loading: when a loaded entity already has a discriminator, the schema load starts **during** loading, and the form only becomes `ready` once both have resolved. `restore` applies discriminators first and waits for their schemas before writing the rest; the ordering is defined in [09 §8.2](./09-loading-and-submission.md#82-restore-rules).
+The same mechanism handles loading: when a loaded entity already has a discriminator, the schema load starts **during** loading, and the form only becomes `ready` once both have resolved. `restore` instead plans discriminator conflicts first and stages schema loads/grafts off-store; only its final atomic commit changes the live discriminator and schema together ([09 §8.2](./09-loading-and-submission.md#82-restore-rules)).

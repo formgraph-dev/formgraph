@@ -20,6 +20,7 @@ interface SubmissionConfig {
   awaitAsync?: boolean;                // wait for in-flight async validation; default true
   gates?: Record<string, 'allow' | 'confirm' | 'block'>;   // per-gate warning policy; default { warnings: 'allow' }, see 06 §7.3
   conflicts?: 'block' | 'allow';              // default 'block', see §7
+  timeoutMs?: number;                        // positive finite deadline for the whole submit, default 30_000 (§4)
 }
 ```
 
@@ -75,16 +76,18 @@ After a successful submit, the engine reloads with the target's response (if it 
 ## 4. Submission pipeline
 
 ```
-engine.submit():                  // submit({ confirm?: string[] }): Promise<SubmitResult>
+engine.submit():                  // submit({ confirm?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SubmitResult>
   if a submit is in flight → return its promise (no second run, no error)
   submitCount++ ; phase=submitting
-  acquire edit lock (§4 below); clear lastSubmitError
-  await schema loads for every eligible dynamic group; failed/mismatched → fail('schema')
-  force-compile validators and option state for eligible fields (03 §6.3)
-  start option loads that gate validity, and async rules with no settled result for the current value
-  run all sync validations (trigger=submit) on fields eligible per validateHidden/validateDisabled
-  if awaitAsync: await in-flight async validations and busy field-type work (assets, 01 §3.4)
-  await pending option loads that gate validity (13 §4.2 pendingValidity)
+  start deadline/cancellation race (§4 below); clear lastSubmitError
+  repeat preflight until value/eligibility version is stable:
+    await schema loads for eligible dynamic groups; failed/mismatched → install group notice; fail('schema')
+    force-compile controllers, validators and option state for eligible fields (03 §6.3)
+    start option loads and current-value async/component validation, including child settlement
+    await value-changing options/schema/computed work; if awaitAsync: await validation and busy work
+    run full submit validation against the resulting values, not the pre-load values
+    if that starts work or values/eligibility change across an await, repeat; apply deadline/tick budgets
+  // With awaitAsync:false, pending validation/busy work returns its existing failure reason, never a successful stale pass.
   if any severity=error (including sources 'input' and 'component', 11 §2.1–2.2)
      or any field-type pending work failed (assets; 01 §3.4)   → fail('errors')
   if async validation still in flight (awaitAsync: false)       → fail('validating')
@@ -93,20 +96,18 @@ engine.submit():                  // submit({ confirm?: string[] }): Promise<Sub
   confirm(opts.confirm) ; gated = gates with notices whose policy is block,
                             or confirm and not confirmed (06 §7.3)
   if gated non-empty                                            → fail('gated', { gates })
+  acquire edit lock and capture the settled state atomically, rechecking its version; if changed → repeat preflight
   plugin 'before' hooks (§4.1)                                  → fail(hook's reason)
   payload = serialize()                   // outbound transformer throws → fail('transform') (08 §1.1)
   result  = await submitTargets[targetId]({ payload, mode, confirmed }, ctx)   // AsyncSource, 08 §1.1
             // throw/reject → lastSubmitError = error; fail('target')
-  if result.errors → map external errors (§5)                   → fail('external')
+  if (result.errors?.length ?? 0) > 0 → map external errors (§5) → fail('external')
   if result.entity: reload({ entity: result.entity, policy: 'replace' })
-  phase=submitted
-  release edit lock
-  apply queued applyExternal changes (§7)
+  finalize('submitted')        // unlock + drain queued updates + phase change; notify only after all are complete
   return {ok:true}
 
 fail(reason, extra?):
-  phase=ready; release edit lock
-  apply queued applyExternal changes (§7)
+  finalize('ready')            // same atomic unlock/drain/phase transition, including cancellation and timeout
   r = {ok:false, reason, ...extra}
   run plugin failure observers, then onSubmitFailed(r) (11 §8); return r
 ```
@@ -117,14 +118,23 @@ type SubmitResult =
   | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
   | { ok: false; reason: 'gated'; gates: GateStop[] }
+  | { ok: false; reason: 'cancelled' | 'timeout'; outcome: 'not-sent' | 'unknown' }
   | { ok: false; reason: `x-${string}`; notices?: NoticeInput[] };   // a plugin's `before` hook stopped the submit (§4.1)
 
 type GateStop = { gate: string; policy: 'confirm' | 'block'; notices: Array<Notice & { path: DataPath }> };   // 06 §7.3
 ```
 
-**Edit lock.** From entry into `submitting` through response application, user/host/plugin value or row-structure writes (`setValue`, `revert`, `reset`, array commands, history replay and host `reload`) are rejected with `E_SUBMIT_BUSY`; `restore` retains `E_RESTORE_BUSY`. Renderers use the form phase to prevent editing without changing `disabled` or submission eligibility. The lock is not just a UI convention: every public/plugin mutation entry checks it. `applyExternal` queues changes instead. Internal schema loads, option reconciliation, computed/default evaluation and validation needed to settle this submission remain allowed and finish before serialization; after payload capture, value-changing async completions are deferred until finalization. The submit's own response reload is internal and allowed. Failure, success and disposal always release the lock; deferred work is generation-checked before applying. Thus a response `replace` cannot silently discard a newer edit. Hosts wanting uninterrupted editing should use a separate editing instance rather than bypass this lock.
+**Settlement before locking.** `phase: 'submitting'` includes a cancellable preflight during which value writes remain allowed. Options, schema loads and component/child validation can change values, so a full submit-validation pass must run **after** they settle. Any new work or value/eligibility change restarts settlement and validation; unchanged settled async results are reused, not blindly restarted. Gates are computed from the final pass. Capture and lock are synchronous with a version recheck, so no write can slip between the checked snapshot and locking. A constantly changing form is bounded by the overall deadline, not an infinite stabilization loop. `validate()` and wizard `next()` use the same stable-validation rule for their scope. This includes waiting for component busy tokens when awaitAsync is enabled.
+
+**Edit lock.** Only after successful preflight, before `before` hooks and serialization, does the exclusive lock begin. From then through response application, user/host/plugin value or row-structure writes (`setValue`, `revert`, `reset`, array commands, history replay and host `reload`) reject with `E_SUBMIT_BUSY`; `restore` retains `E_RESTORE_BUSY` throughout submission. Renderers use the form phase to prevent editing without changing `disabled` or eligibility. Every mutation entry checks the lock. `applyExternal` queues throughout submission. Once locked, core value-changing completions and context-driven recomputation are deferred to finalization; custom components buffer rejected value updates as subsequent edits, rather than throwing from subscription callbacks ([16 §22](./16-cookbook.md#22-another-engine-as-a-custom-field)). The submit's own response reload is internal and allowed. Failure, success, cancellation and disposal release the lock; deferred work is generation-checked before applying. Thus a response `replace` cannot silently discard a newer accepted edit.
+
+**Cancellation and deadline.** The first call's `signal` and `timeoutMs` govern a shared in-flight submit promise; later calls return that promise and do not replace its controls. The default overall deadline is `submission.timeoutMs ?? 30_000`; per-call `timeoutMs` may override it with a positive finite value. `engine.cancelSubmit()` cancels the current attempt (no-op when idle). Abort/deadline is raced against **every** awaited stage, including readiness, sources, component/busy settlement, hooks and response processing. It does not depend on the callee honoring its signal: revoke the attempt generation, stop its continuation, abort submit-owned work, release the lock, drain queued updates, return to `ready` and resolve once with `reason: 'cancelled'` or `'timeout'`. Late resolutions/rejections are consumed and cannot call the target, apply its response or finalize the old attempt. Shared field loads may continue for other consumers, but never resume the cancelled submit. Final failure observers cannot hold completion hostage: invoke them in order without awaiting unbounded promises and report rejections separately. Timers use `platform`, not DOM globals.
+
+Before the target is invoked, `outcome` is `'not-sent'`; once it has been invoked it is `'unknown'`, even if its signal is aborted. A timed-out/cancelled target may already have saved remotely. Never auto-retry it; reconcile with the backend or use host idempotency keys first. The same uncertainty can apply to target transport rejection. Editing state survives cancellation; disposal is not required.
 
 **Target failure.** A thrown/rejected target records the original error in `FormState.lastSubmitError` and reports a runtime `E_SUBMIT_TARGET`. It returns `{ ok: false, reason: 'target' }`, keeps local edits, restores `ready`, unlocks, drains external/deferred updates, then runs failure hooks and `onSubmitFailed`, in that order. The host may offer retry; the engine never automatically retries a potentially non-idempotent target. All other failure branches also drain the queue. Success still applies any response entity first, then unlocks and drains before success observers. Finalization is shared so cleanup cannot be skipped by a failure branch.
+
+`finalize` releases the lock and drains queued updates before publishing the final phase, in one notification boundary. A phase subscriber that sees `ready`/`submitted` may write immediately; it must not observe a still-held lock or a baseline that has not yet drained. Such listener writes form a subsequent tick, not part of the frozen submitted payload.
 
 #### 4.1 Plugin submit hooks
 
@@ -136,7 +146,7 @@ type SubmitHook = (e: { mode: SubmitMode; confirmed: string[]; result?: SubmitRe
 ```
 
 - `before` runs after validation and gates pass, before `serialize()`. It may be async (awaited, aborted with the submit's `signal`) and may return `{ stop: 'x-…' }`, which fails the submit with that reason (`notices` become form-level notices). It's for programmatic stops; asking the user to confirm is a gate ([06 §7.3](./06-validation.md#73-gates-submit-policy-for-warnings)).
-- `success` and `failure` run after the result is known, observe only (a return value is ignored), and can't change it. `failure` hooks run **before** the host's `onSubmitFailed`.
+- `success` and `failure` are dispatched after finalization, observe only, and cannot change the result. Invoke them in registration order without awaiting their returned promises; async rejections are reported separately and cannot stall completion. `failure` hooks are invoked **before** the host's `onSubmitFailed` (their asynchronous continuations may finish later).
 - Hooks run in plugin order. A thrown hook is reported through `onDiagnostic` and doesn't change the result, except that a throwing `before` stops the submit with `reason: 'x-<plugin>'`.
 
 `onSubmitFailed` runs for **every** `{ ok: false }` result; the adapters' default branches on `reason` ([11 §8](./11-rendering-and-adapters.md#8-accessibility)).
@@ -275,6 +285,7 @@ interface Snapshot {
   revision: number;                         // engine.revision when taken; only meaningful in the session that took it
   current: Json;                            // the sparse top layer
   rows: Record<DataPath, RowKey[]>;         // array row identity, so per-row indicators and errors line up
+  baselineRows: Record<RowKeyPath, BaselineRowKeys>; // keys + unresolved provenance (03 §3.2), paired with base values
   base: Record<DataPath, Json | null>;      // baseline of each stored leaf of `current` when taken
   stash?: Json;                             // dynamic-group orphans kept by orphanPolicy 'stash' (08 §5)
   touched?: DataPath[];                     // row key paths; restored so messages show as they did
@@ -285,6 +296,8 @@ interface RestoreResult { applied: DataPath[]; conflicts: DataPath[]; dropped: D
 ```
 
 **Granularity.** The paths of a snapshot (`base` keys, `RestoreResult` lists, stale checks) are the **stored leaves** of `current`: each array counts as one entry ([03 §3.1](./03-state-model.md#31-resolution-granularity)). `touched` is mapped through the restored row keys; entries under rows that no longer match are dropped.
+
+`baselineRows` preserves which current keys originally belonged to each saved baseline array, independently of current order and insertions. Drafts include maps for arrays under their saved atomic `base` entries (and stash baselines); arrays with no restored current override keep live baseline maps, not draft current keys. For an unchanged baseline, restore installs saved associations against `base` values recursively before descendant revert is available. Validate key uniqueness, `keys.length` against the saved baseline array, disjoint `keys`/`unresolved` lists, nesting and map/value consistency (`E_SNAPSHOT_INVALID` otherwise). With a changed baseline, match by `identityKey` where available; otherwise assign the new baseline fresh keys and retain formerly-baseline draft keys in `unresolved`, including any already-unresolved keys. Descendant revert rejects those keys with `E_ROW_BASELINE_UNKNOWN`, never guessed indexes. Keys in neither list are genuinely inserted and use defaults. These markers survive another snapshot/restore and stash round-trip. Accepting the external whole array or whole-array revert restores known associations; choosing `local` or `keep-draft` retains unresolved markers even without a conflict flag.
 
 **Field-type filter.** `snapshot()` stores each value through its field type's `toSnapshot` hook ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)). For assets (`assets` plugin) only values with status `ready` are kept. Others (pending, uploading, error) are left out with `W_SNAPSHOT_ASSET_DROPPED`, since their uploads don't survive the session.
 
@@ -311,14 +324,14 @@ savedRevision = engine.revision.get();     // the restored state is what's store
 
 1. **Waits for `ready`**: loading and dynamic-group schema loads finish first. Rejects with `E_RESTORE_BUSY` while `phase` is `submitting`. A later `reload` or `restore` supersedes a pending one (§3).
 2. **Validates the snapshot.** Snapshots are untrusted input (they come back from storage): the shape is checked against the `Snapshot` schema first (`E_SNAPSHOT_INVALID`). Older snapshot `version`s are upgraded by built-in migrations, like contract migrations ([01 §7](./01-schema-contract.md#7-versioning-and-load-time-validation)). A different `formId`, or a `version` with no migration, rejects with `E_SNAPSHOT_MISMATCH`. A different `contractHash` isn't an error: each path is checked instead (rule 5).
-3. **Dynamic groups first.** Discriminators are ordinary paths in `current`. They are written first, the sub-schema loads they trigger are awaited, and then the rest is applied, so every restored path has its node.
-4. **Writes with origin `restore`** ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): first plan the surviving paths and stale decisions (rules 5–6), then replace `current` **atomically** (not merged), with no effects (origin policy `history: 'clear'`). Reconcile row keys against the arrays that actually survive: an applied draft array reuses its validated draft keys; an array dropped from `current` keeps the current baseline's keys, matching by `identityKey` where available and allocating fresh keys otherwise. Never install draft keys on a different baseline array. Reconcile nested arrays recursively and discard meta for removed/unmatched rows; restore `stash` and only `touched` entries whose row keys survive. Conflicts are cleared, then the conflicts planned by rule 6 are installed in the same commit.
+3. **Plan discriminators before loading schemas.** Against an immutable baseline/contract generation, decide stale handling (rule 6) for each discriminator or its containing atomic array **without writing live state**. A dropped draft discriminator selects the baseline schema; kept/conflicted draft values select the draft schema. Stage required schema loads, normalization, compilation and graft/orphan plans off-store, recursively for nested groups. Do not detach the live schema, run orphan disposal or alter any live layer while awaiting. A failed/superseded stage discards the plan and leaves live state unchanged. A baseline or relevant live-value change during staging supersedes the restore with `E_SUPERSEDED`; the caller may retry against the new state.
+4. **Commit with origin `restore`** ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): after rules 5–6 resolve all remaining paths against the planned schemas, recheck the captured generation and commit planned grafts, layers, row maps, conflicts, stash and touched state **atomically**, with no effects (origin policy `history: 'clear'`). An applied draft array reuses validated current draft keys and reconciled baseline associations; a dropped array keeps baseline current keys and baseline associations. Never install draft keys on a different baseline array. Reconcile nested arrays recursively and discard meta for removed/unmatched rows; restore only touched entries whose keys survive. Observers never see draft discriminators with baseline children or a partially restored schema.
 5. **Paths that no longer exist** in the contract are dropped with `W_SNAPSHOT_PATH_DROPPED`. Values that exist but are now invalid (an option was removed, a rule changed) are kept and simply fail validation.
 6. **Stale drafts.** For each path `p`, with `base` = `snapshot.base[p]`, `external` = the baseline now, and `local` = the draft value, the [§7.1](#71-conflict-detection) table decides: if `base` equals `external`, or there's no draft value, the draft applies; if `local` equals `external`, the path is dropped from `current` with no conflict. Otherwise (a real conflict) `onStale` decides:
    - `conflict` (default): the draft value is applied and flagged as a conflict (§7.2). Submit is blocked until resolved (`submission.conflicts`).
    - `keep-draft`: the draft value wins silently.
    - `drop`: the draft value is discarded for that path.
-7. **Cascade invalidation** ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)) then runs for paths whose baseline changed since the snapshot or that were dropped, since their dependents were saved against other values. Values that restored unchanged aren't invalidated.
+7. **Cascade invalidation** ([13 §4](./13-option-sources-and-cascading.md#4-invalidation)) is included in the final commit's tick for paths whose baseline changed since the snapshot or that were dropped, since their dependents were saved against other values. Values that restored unchanged aren't invalidated. Notifications occur only after the complete structural/value tick.
 
 ### 8.3 Notes
 
@@ -351,6 +364,7 @@ interface EngineState {
   revision: number;
   layers: { default: Json; loaded: Json; current: Json };
   rows: Record<DataPath, RowKey[]>;
+  baselineRows: Record<RowKeyPath, BaselineRowKeys>; // baseline associations and unresolved provenance
   meta: { touched: RowKeyPath[]; visited: RowKeyPath[]; conflict: Record<DataPath, Conflict>; stash?: Json };
   notices?: Record<RowKeyPath, Notice[]>;    // external and settled async messages only
   options: Record<string, Json>;                 // option cache entries by cache key (08 §3)
@@ -361,7 +375,7 @@ interface EngineState {
 ```
 
 **Resume.** `resume` is untrusted input: its shape is validated first, then `formId` and `contractHash` must match the contract; otherwise `createFormEngine` throws `E_RESUME_MISMATCH` (catch it and start without `resume`). On success:
-- the entity load is skipped, and `layers`, `rows`, `meta` and `revision` are installed as one commit with origin `resume` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): no inbound mapping, no effects, no conflict detection, `history: 'clear'`; dirty bits and counts are rebuilt from the layers, and `revision` is set to the exported value;
+- the entity load is skipped, and `layers`, `rows`, `baselineRows`, `meta` and `revision` are installed as one commit with origin `resume` ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): no inbound mapping, no effects, no conflict detection, `history: 'clear'`; baseline row maps are validated against the exported layers, dirty bits and counts are rebuilt, and `revision` is set to the exported value;
 - dynamic sub-schemas in `subSchemas` are compiled from their `nodes` instead of calling the `SchemaSource`. They take the same path as fetched ones (the detect size check and steps 3–7, the engine's `limits`, `allow` and `strict`, node counting; [08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)), and the engine recomputes their hash. A sub-schema that fails a check or whose hash doesn't match is dropped and fetched again (`W_RESUME_SCHEMA_REJECTED`); the rest of the form still resumes; entries exported with `exportState({ subSchemas: 'ref' })` carry no `nodes` and are fetched again, and fetched nodes whose `hash` differs are used but logged with `W_RESUME_SCHEMA_CHANGED`;
 - option fetches whose cache entry is included are skipped; the rest run as usual;
 - the engine starts in the exported `locale`, even if `i18n.locale` differs, so the first render matches the server; if it differs, `setLocale(i18n.locale)` runs automatically after `ready` (the normal atomic switch, [10 §3.3](./10-localization.md#33-loading-bundles-separately)). Pick the locale on the server (cookie, header) to avoid the brief switch;

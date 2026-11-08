@@ -25,7 +25,7 @@ export interface MacroNode {
   [arg: string]: Json;            // macro-specific arguments
 }
 // MacroNode is part of InputNode only; expanded contracts never contain it (01 §5.1)
-export type InputNode = Field | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode;
+export type InputNode = InputField | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode;   // InputField includes bare option arrays (01 §5.1)
 ```
 
 - **Macro ids** are kebab-case with an optional `@MAJOR` suffix (`choice-with-other@2`, rule 6), the one exemption from D21 ([01 §2.1](./01-schema-contract.md#21-enumerated-values)). Only `@formgraph/macros` registers unprefixed ids; every other macro id must start with `x-`, like custom field types (`E_MACRO_PREFIX`, thrown by `register`).
@@ -34,10 +34,11 @@ export type InputNode = Field | Group<InputNode> | ArrayNode<InputNode> | Dynami
 ## 3. Definition
 
 ```ts
+type MacroOutputNode = InputField | Group<MacroOutputNode> | ArrayNode<MacroOutputNode> | DynamicGroup | Content;   // short forms, never nested macros
 interface Macro {
   id: string;
   args: StandardSchemaV1;         // validates the macro node's arguments (E_MACRO_ARGS)
-  expand(node: MacroNode, ctx: MacroContext): Node | Node[];
+  expand(node: MacroNode, ctx: MacroContext): MacroOutputNode | MacroOutputNode[];
 }
 
 interface MacroContext {
@@ -66,6 +67,7 @@ detect → migrate → validate input → normalize → expand macros (+ normali
 ## 5. Rules
 
 1. **Core output only.** `expand` returns core nodes. Output that contains `macro` nodes is an error (`E_MACRO_NESTED`). Expansion is one pass, with no fixpoint. Macros reuse other macros only by calling them explicitly (§5.1).
+   **Single-item slots.** Expansion splices sibling nodes only into node-list slots (`structure` or `children`). In `ArrayNode.item`, it must return exactly one node (`E_MACRO_ITEM_ARITY` for zero/multiple outputs), which must satisfy the ordinary item restrictions (not `content`, otherwise `E_SCHEMA`). There is no implicit group wrapping: it would change scalar-vs-object row semantics. Put a multi-node macro such as `hierarchy` inside an explicit item's group `children`, or write a wrapper macro that returns one group. This context check applies after nested macro calls and output normalization; `InputNode` allows a macro there, not arbitrary output arity.
 2. **Pure and synchronous.** No I/O, no randomness, no clock, no access to `context` or to the rest of the contract. The same input always gives the same output, so expansions are cached by `hash(macro node, macro id including @MAJOR, macro package version)`.
 3. **Scoped ids.** Every node an expansion returns needs an id that is unique in its data scope. Ids can come from arguments (like `hierarchy`'s `levels[].id`) or be derived with `ctx.uniqueId(hint)`, which is deterministic: `${node.id}__${hint}` from the macro node's own `id` (for example `source__other`). Collisions **within one expansion** (including `ctx.expand` calls, and the same hint used twice) are `E_MACRO_ID_COLLISION`. Collisions with nodes outside the expansion are caught by the compiler as `E_DUPLICATE_DATA_KEY`, whose `location.source` names the macro. When no output node reuses the macro's own `id`, that id is only used in error messages, origins, and `uniqueId`.
 4. **Errors point to the source.** Expansion records where each generated node came from in a **side map** (§8), never on the node itself, so expanded contracts stay valid, clean JSON. Diagnostics on those nodes use it to refer to the macro ("in macro `choice-with-other` at /structure/3"), not to generated ids ([17 §1](./17-diagnostics.md#1-shape)).
