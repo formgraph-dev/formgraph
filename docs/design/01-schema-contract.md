@@ -266,7 +266,7 @@ There's no separate "search" type: search is a `provider` options source with a 
 Custom types are registered with Standard Schemas. Typed registration returns a registry whose type includes the new entry, so contracts written with `defineContract` are checked against it and their values are inferred ([21](./21-type-inference.md)):
 
 ```ts
-const registry = createRegistry({ parent: coreRegistry }).fieldType('x-signature', {
+const registry = coreRegistry.extend().fieldType('x-signature', {
   value:  v.nullable(v.string()),                                   // data URL or asset ref
   config: v.object({ minStrokes: v.optional(v.number()) }),        // flat on the node, engine-visible; any Standard Schema
   ui:     v.object({ penColor: v.optional(v.string()), height: v.optional(v.number()) }),

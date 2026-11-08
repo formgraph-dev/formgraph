@@ -11,7 +11,7 @@ Declaration merging (`declare module '@formgraph/contract'`) is the **last resor
 `register` mutates, so it can't change a type. Typed registration returns a registry with a **wider type**. Use chaining or one object literal:
 
 ```ts
-const registry = createRegistry({ parent: coreRegistry })     // Registry<CoreEntries>
+const registry = coreRegistry.extend()                      // Registry<CoreEntries>, new child
   .fieldType('x-signature', {
     value:  v.nullable(v.string()),                            // any Standard Schema
     config: v.object({ minStrokes: v.optional(v.number()) }),
@@ -22,12 +22,14 @@ const registry = createRegistry({ parent: coreRegistry })     // Registry<CoreEn
   .severity('x-legal', { extends: 'warning', gate: 'legal' });
 
 // same result, one call
-const registry2 = createRegistry({
-  parent: coreRegistry,
+const registry2 = coreRegistry.extend({
   fieldTypes: { 'x-signature': { … } },
   validators: { iban: ibanValidator },
   severities: { 'x-legal': { extends: 'warning', gate: 'legal' } },
 });
+
+// Object registration also infers plugin entries, options and members.
+const debugRegistry = coreRegistry.extend({ plugins: { debug } });
 ```
 
 ```ts
@@ -45,7 +47,7 @@ interface RegistryEntries {
 
 - **Types come from the schemas.** `value`, `config`, `ui` and validator `param` types are `StandardSchemaV1.InferOutput<…>` of the registered schemas, so nothing is written twice. A field type's `empty` must be assignable to its `value` type.
 - **Same runtime object.** `fieldType(…)` etc. register on the receiver and return it re-typed. The old `registry.fieldTypes.register(…)` stays, untyped (§6). Duplicate ids still throw `E_REGISTRY_DUPLICATE`.
-- **Children.** `createRegistry({ parent })` has type `Parent & Own`. A child that overrides a parent id must use a schema whose output is assignable to the parent's (otherwise a type error), so contracts typed against the parent stay correct.
+- **Roots and children.** `createRegistry()` / `createRegistry({ … })` create roots. `registry.extend()` / `registry.extend({ … })` create a new child without modifying the receiver; the object accepts the same registration categories as `createRegistry`. Child types retain inherited entries and infer each own registration, including plugin options/members. A child that overrides a parent id must use a schema whose output is assignable to the parent's (otherwise a type error), so contracts typed against the parent stay correct. Chaining registrations on the returned child still mutates that child, not its parent. There is no `parent` creation option or static `createRegistry.extend` method.
 - **Plugins.** A plugin declares its entries in `registers`, and `registry.plugin(factory)` returns the registry re-typed with them plus the plugin's options and members. Contracts see plugin-provided types and validators with no extra step. Engine members use `FormEngineWith<R, V, O>`, filtering by per-engine options: literal `false` removes the plugin; a possibly disabled plugin has optional members ([18 §5](./18-api-reference.md#5-built-in-plugin-members)). The default entry adds built-ins before filtering (`asset`, `multi-asset`, `icu` formatters, …).
 - **Key-only registries** (providers, sources, transformers, …) contribute their ids so the contract can be checked. Their payload types are in §3.
 

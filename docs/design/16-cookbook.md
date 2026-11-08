@@ -345,7 +345,7 @@ Wrapping a third-party control (here, an editable grid) whose value is an object
 ```ts
 type GridValue = { columns: string[]; rows: Array<Record<string, number | string | null>> };
 
-const registry = createRegistry({ parent: coreRegistry }).fieldType('x-grid', {   // typed: contracts see x-grid (21 §1)
+const registry = coreRegistry.extend().fieldType('x-grid', {   // typed: contracts see x-grid (21 §1)
   value:  v.object({ columns: v.array(v.string()), rows: v.array(v.record(v.string(), v.nullable(v.union([v.number(), v.string()])))) }),
   config: v.object({ maxRows: v.optional(v.number()) }),
   ui:     v.object({ dense: v.optional(v.boolean()) }),
@@ -446,7 +446,7 @@ const subformLifecycle = definePlugin('x-subform-lifecycle', {
   },
 });
 
-const registry = createRegistry({ parent: coreRegistry }).fieldType('x-subform', {   // opaque value: the child's payload type isn't known statically
+const registry = coreRegistry.extend().fieldType('x-subform', {   // opaque value: the child's payload type isn't known statically
   value: v.any(), config: v.object({ contractUrl: v.string() }), ui: v.object({}),
   empty: null,
   // payloadSchema: the child's toPayloadSchema(), if it's known when the parent is built

@@ -290,6 +290,22 @@ interface WizardController {                                    // 11 §5
 
 Links: [03 §6.2](./03-state-model.md#62-undo--redo-opt-in), [09 §8](./09-loading-and-submission.md#8-snapshots-drafts), [11 §5](./11-rendering-and-adapters.md#5-wizards).
 
+### Registry composition
+
+`createRegistry()` and `createRegistry({ … })` create roots. `registry.extend()` creates an empty child; `registry.extend({ … })` creates a child with inferred own registrations. Both object forms accept the same categories listed in [08 §1](./08-async-data-and-registries.md#1-registries), plus plugin factories. Extension leaves the parent unchanged and uses inherited lookup and compatible overrides, not a shallow object merge. Fluent registration still mutates its receiver and returns its widened type ([21 §1](./21-type-inference.md#1-typed-registries)).
+
+```ts
+const registry = coreRegistry.extend({
+  fieldTypes: { 'x-signature': signature },
+  validators: { uniqueEmail },
+  plugins: { debug },                        // keyed by factory name; arrays also supported
+});
+// Equivalent: coreRegistry.extend()
+//   .fieldType('x-signature', signature).validator('uniqueEmail', uniqueEmail).plugin(debug)
+```
+
+There is no `createRegistry({ parent })` option or static `createRegistry.extend()` method.
+
 ## 6. Third-party plugins
 
 Third-party plugin methods are only reachable as `engine.plugins[name]`, typed from the plugin's `Members` ([03 §8.1](./03-state-model.md#81-plugin-api)):

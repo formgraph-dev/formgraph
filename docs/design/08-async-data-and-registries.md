@@ -4,10 +4,10 @@
 
 ## 1. Registries
 
-All registries share one shape: a typed `Map<string, T>` with `register`, `get`, `has`. The registry also has typed registration methods (`fieldType`, `validator`, `severity`, …, or one object literal to `createRegistry`) that return it with a wider `Registry<E>` type, so contracts can be type-checked against it ([21 §1](./21-type-inference.md#1-typed-registries)); `register` itself is untyped. Everything is registered on a `Registry`, never on an engine; `loadContract` and `createFormEngine({ registry })` receive it.
+All registries share one shape: a typed `Map<string, T>` with `register`, `get`, `has`. The registry also has typed registration methods (`fieldType`, `validator`, `severity`, …, or one object literal to `createRegistry` / `registry.extend`) that preserve inferred entries, so contracts can be type-checked against it ([21 §1](./21-type-inference.md#1-typed-registries)); `register` itself is untyped. Everything is registered on a `Registry`, never on an engine; `loadContract` and `createFormEngine({ registry })` receive it.
 
 - **Append-only.** Registering a new id is always allowed; registering an id that already exists in the same registry throws `E_REGISTRY_DUPLICATE`, so two plugins can't silently override each other. A compiled schema keeps what it resolved; later registrations don't change running engines.
-- **Overrides use a child.** `createRegistry({ parent })` looks up its own entries first, then the parent's, so a child can replace a parent id (tests, tenants, overriding a built-in validator).
+- **Overrides use a child.** `registry.extend()` creates a child that looks up its own entries first, then the parent's, so it can compatibly replace a parent id (tests, tenants, overriding a built-in validator). `registry.extend({ fieldTypes: { … }, validators: { … }, plugins: { … } })` registers entries on the new child in one call, with the same categories, inference and validation as `createRegistry({ … })` and fluent registration. Neither form modifies the parent. Duplicate own ids still fail; inherited ids use the existing compatible-override rules ([21 §1](./21-type-inference.md#1-typed-registries)). `createRegistry` creates roots; inheritance uses the instance's `extend`, not a `parent` option.
 - **Per engine.** `createFormEngine` wraps the host's registry in its own child; plugins ([03 §8.1](./03-state-model.md#81-plugin-api)) are recorded on the registry as factories (`registry.plugin(factory)`, which also registers the types and validators they declare), and each engine makes its own instances, so several engines can share one host registry without sharing plugin state.
 
 | Registry | Key in contract | Implementation type | Allow-listable |
@@ -85,7 +85,7 @@ An inbound failure while applying an **accepted submit response** is different f
 `QueryTransformer` and `ResultTransformer` are in §2. The four transformer registries stay separate so each kind's signature can change independently and their ids don't share a namespace.
 
 ```ts
-const registry = createRegistry({ parent: globalRegistry });
+const registry = globalRegistry.extend();
 const engine = createFormEngine({ contract, registry, context });
 ```
 
