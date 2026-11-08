@@ -25,7 +25,7 @@ export interface MacroNode {
   [arg: string]: Json;            // macro-specific arguments
 }
 // MacroNode is part of InputNode only; expanded contracts never contain it (01 §5.1)
-export type InputNode = Field | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | MacroNode;
+export type InputNode = Field | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode;
 ```
 
 - **Macro ids** are kebab-case with an optional `@MAJOR` suffix (`choice-with-other@2`, rule 6), the one exemption from D21 ([01 §2.1](./01-schema-contract.md#21-enumerated-values)). Only `@formgraph/macros` registers unprefixed ids; every other macro id must start with `x-`, like custom field types (`E_MACRO_PREFIX`, thrown by `register`).

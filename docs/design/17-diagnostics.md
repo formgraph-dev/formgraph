@@ -68,7 +68,7 @@ type DiagnosticPhase = typeof DIAGNOSTIC_PHASES[number];
 | `E_DUPLICATE_LOCALE` | validate-input | Two locale keys normalize to the same tag | [10 §3.2](./10-localization.md#32-locale-tags) |
 | `E_INVALID_ID` | validate-input | Node id doesn't match `^[A-Za-z_][A-Za-z0-9_-]*$` | [01 §1](./01-schema-contract.md#1-principles) |
 | `E_RESERVED_KEY` | validate-input | `__proto__`, `constructor` or `prototype` used as an id, data key or `serializeAs` | [01 §1](./01-schema-contract.md#1-principles) |
-| `E_INVALID_MESSAGE` | validate-input / runtime | Malformed message, or outside the supported ICU subset ([10 §2.1](./10-localization.md#21-formatter)); at runtime only that key falls through | [10 §3.4](./10-localization.md#34-rules) |
+| `E_INVALID_MESSAGE` | validate-input / call / runtime | Message rejected by the formatter's syntax checker: at load for contract/default/inline text; at engine creation if the formatter changes; on bundle arrival only that key falls through | [10 §3.4](./10-localization.md#34-rules) |
 | `W_MISSING_TRANSLATION` | validate-input / runtime | A key has no translation for a declared locale, so `default` shows (*strict → error at load*; for bundles from a `LocaleSource`, checked when the bundle arrives) | [10 §3.4](./10-localization.md#34-rules) |
 | `W_UNUSED_TRANSLATION` | validate-input / runtime | A bundle key no node references (runtime: checked when the bundle arrives) | [10 §3.4](./10-localization.md#34-rules) |
 
@@ -104,7 +104,7 @@ type DiagnosticPhase = typeof DIAGNOSTIC_PHASES[number];
 | `E_NOT_ALLOWED` | expand / validate-core / compile / call | An id is referenced outside the contract's `allow` list for that registry; checked where the kind is resolved (macros in expand, evaluators/fieldTypes in validate-core, rest in compile, a precompiled contract's `refs` at `createFormEngine` (call)); takes precedence over unknown-id codes | [05 §4](./05-expressions.md#4-security-model) |
 | `E_INVALID_PATTERN` | compile | A contract regex failed to compile with `registry.regex` (always with the `u` flag) | [06 §2.2](./06-validation.md#22-regex-safety) |
 | `E_TIMEZONE_UNSUPPORTED` | compile | A `date-time` field names an IANA `timezone` but the platform has no `Intl` time zone support (D24); `utc` and `local` still work | [01 §3.3.1](./01-schema-contract.md#331-implied-rules) |
-| `W_UNSAFE_PATTERN` | compile | Best-effort check found nested quantifiers (skipped for linear engines) (*strict → error*) | [06 §2.2](./06-validation.md#22-regex-safety) |
+| `E_UNSAFE_PATTERN` | compile | Pattern is outside the bounded default grammar and no linear-time engine is registered; rejected even without strict | [06 §2.2](./06-validation.md#22-regex-safety) |
 | `E_DYNAMIC_PATTERN` | compile | A `pattern` rule's `value` is an Expression instead of a literal | [06 §2.2](./06-validation.md#22-regex-safety) |
 | `E_PROVIDER_DEPS_REQUIRED` | compile | Provider source without `options.dependsOn` | [13 §2.3](./13-option-sources-and-cascading.md#23-provider) |
 | `E_TRANSFORM_FAILED` | runtime / call | A transformer threw; the owning operation fails and nothing is written. `detail: { kind, id }` | [08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes) |
@@ -138,9 +138,11 @@ type DiagnosticPhase = typeof DIAGNOSTIC_PHASES[number];
 | `W_SNAPSHOT_ASSET_DROPPED` | runtime | `snapshot()` left out an asset value whose status isn't `ready` | [09 §8](./09-loading-and-submission.md#8-snapshots-drafts) |
 | `E_SNAPSHOT_INVALID` | call | Snapshot fails shape validation | [09 §8.2](./09-loading-and-submission.md#82-restore-rules) |
 | `E_RESTORE_BUSY` | call | `restore` called while `phase` is `submitting` | [09 §8.2](./09-loading-and-submission.md#82-restore-rules) |
+| `E_SUBMIT_BUSY` | call | Value/row mutation or host reload attempted during the submit edit lock; no write is applied | [09 §4](./09-loading-and-submission.md#4-submission-pipeline) |
+| `E_SUBMIT_TARGET` | runtime | Submit target threw/rejected; original error stored in lastSubmitError, submit returns reason target, finalization drains queued updates | [09 §4](./09-loading-and-submission.md#4-submission-pipeline) |
 | `E_SUPERSEDED` | call | A pending `reload`/`restore` was superseded by a later call; it writes nothing | [09 §3](./09-loading-and-submission.md#3-reload-policy) |
 | `E_UNDEFINED_VALUE` | call | `setValue` given `undefined`; use the empty value or `revert` | [03 §3](./03-state-model.md#3-precedence-by-presence-not-nullishness) |
-| `E_PLUGIN_MISSING` | call / compile / runtime | Names the plugin and its import. *call*: method of a plugin that isn't installed (slim entry), or a plugin's `requires` is unmet (*throws*). *compile*: the contract needs `icu` (a message uses plural/select/selectordinal/number/date/time) or `assets` (an `asset`/`multi-asset` field). *runtime*: a `LocaleSource` bundle needs `icu`; that key falls through | [03 §8](./03-state-model.md#8-plugins) |
+| `E_PLUGIN_MISSING` | call / compile / runtime | Names the plugin and its import. *call*: missing plugin method/dependency, or an engine formatter override lacks syntax support (*throws*). *compile*: the contract needs unsupported ICU syntax or assets. *runtime*: a locale bundle needs unsupported ICU syntax; that key falls through. Custom formatters passed to loading supply their own syntax checker | [03 §8](./03-state-model.md#8-plugins) |
 | `E_PLUGIN_DUPLICATE` | call | Two plugins with the same `name` recorded in one registry (*throws*) | [03 §8.1](./03-state-model.md#81-plugin-api) |
 | `E_PLUGIN_CONFLICT` | call | Two plugins claim an exclusive capability, for example both set the text formatter; names both plugins (*throws*) | [03 §8.1](./03-state-model.md#81-plugin-api) |
 | `E_RESUME_MISMATCH` | call | `resume` state fails shape validation, or its `formId`/`contractHash` doesn't match the contract (*throws*; render client-only without `resume`, [16 §19](./16-cookbook.md#19-server-rendered-form)) | [09 §9](./09-loading-and-submission.md#9-server-rendering) |

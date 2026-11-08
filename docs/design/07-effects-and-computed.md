@@ -109,7 +109,7 @@ Action semantics:
 - `set`: write the evaluated `value` into `current`.
 - `reset`: write the **default** value into `current`, ignoring loaded.
 - `revert`: delete the key from `current`, falling back to loaded, then default.
-- Arrays are atomic ([03 §3.1](./03-state-model.md#31-resolution-granularity)): `reset` or `revert` on a path inside an array (`items[2].qty`) acts on the **whole array**. `clear` and `set` write the leaf with an atomic array write ([03 §3.2](./03-state-model.md#32-atomic-array-writes)).
+- Arrays are atomic **in storage**, not in command targeting ([03 §3.2](./03-state-model.md#32-atomic-array-writes)). For `items[2].qty`, all four actions clone the resolved array and change only that cell. `reset` uses that field's default in its row scope; `revert` uses its baseline value, matching baseline rows by stable row key (including through nested arrays), not index. If a row has no baseline counterpart, use the field's default/empty value. Other cells, rows and row keys stay unchanged. Remove the array override only when the reconstructed array equals its baseline; otherwise keep the atomic override. Targeting `items` itself still resets/reverts the whole array.
 - `validate`: schedule validation of the target (respecting "already validated once").
 - `x-*`: a host-registered effect handler. It receives the engine write API with origin `effect`:
 

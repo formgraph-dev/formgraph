@@ -90,10 +90,12 @@ At compile time, Tarjan's SCC runs over the read edges (§5.1) plus every **valu
 | `whenHidden: 'clear'` on T | reads of T's effective `visible` → `T.value` |
 | Cascade `onChange: 'clear'` / `'reset'` on T | T's options dependencies → `T.value` |
 | `autoSelectSingle` on T | `T.options` → `T.value` |
-| `onSelect` reverse fill into T | the selecting field → `T.value` |
+| `onSelect` reverse fill into T | user-selection event → `T.value`; event-only writer, checked with its protected batch below |
 | `reset-when` macro output | already plain effects; listed for completeness |
 
 Any cycle is `E_CYCLE` and lists the path with each edge's kind. Effects are checked conservatively: an effect from A targeting B counts as an edge A → B.value even if its `when` is rarely true. **Exception:** an effect that targets its own field (A → A) isn't a static cycle error, because it is meant to converge (for example normalizing a selection). It is limited by `limits.effectDepth` at runtime ([§6](#6-scheduler)), and repeated `E_EFFECT_DEPTH` hits are reported in dev.
+
+**Reverse-fill exception, not a general cycle escape.** `onSelect` runs only for an explicit user selection of its field, never for writes from cascade invalidation, auto-select, effects, loading or replay. Before accepting an apparent child→ancestor→child cycle, the compiler checks that every reverse edge is an `onSelect` write to a transitive options dependency (`E_ON_SELECT_TARGET` otherwise), and that every return value-writing edge is a built-in cascade invalidation targeting the selecting child or another target protected by that same batch. Removing those event-only reverse edges must leave an acyclic propagation graph; any return path through an ordinary effect, computed/default writer, auto-select or another field's selection batch is still `E_CYCLE`. This certificate permits only the batch-backed reverse-fill loop, not unrelated cycles in the same component. The scheduler topologically orders the acyclic propagation graph; the user-selection batch runs before that propagation, with the certified invalidations suppressed only for its protected targets ([13 §7](./13-option-sources-and-cascading.md#7-reverse-fill)). Ordinary parent edits still invalidate normally.
 
 ### 5.3 Wildcards
 

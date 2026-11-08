@@ -32,7 +32,8 @@ interface FieldController<V = Json> {
   path: Readable<DataPath>;                  // index-based; changes when an ancestor row moves. key: stable across moves
   key: RowKeyPath; compiled: CompiledNode;   // compiled.node is the contract node (01 §7.3)
   state: Readable<FieldState<V>>;            // primary: adapters subscribe once per field (03 §2.2)
-  select<T>(pick: keyof FieldState<V> | ((s: FieldState<V>) => T), eq?: (a: T, b: T) => boolean): Readable<T>;   // memoized: get() keeps its result while input unchanged or eq holds (default Object.is)
+  select<K extends keyof FieldState<V>>(key: K, eq?: (a: FieldState<V>[K], b: FieldState<V>[K]) => boolean): Readable<FieldState<V>[K]>;
+  select<T>(pick: (s: FieldState<V>) => T, eq?: (a: T, b: T) => boolean): Readable<T>;   // memoized: get() keeps its result while input unchanged or eq holds (default Object.is)
   ids: FieldIds;                             // §8
   // fine-grained handles, derived from `state` (select(s => s.value), …), for non-UI code
   value: Readable<V>; visible: Readable<boolean>; feedback: Readable<Notice[]>; dirty: Readable<boolean>;   // … one per FieldState member
@@ -65,6 +66,12 @@ interface ScopeController {          // one array row, or a dataScope group
   feedback: Readable<Notice[]>; severity: Readable<Severity | null>; showFeedback: Readable<boolean>;   // container-level messages, 06 §7.4
   registerElement(el: unknown): () => void;    // container focus target (§8)
   focus(): Promise<boolean>;
+}
+
+interface DynamicGroupController extends ScopeController {   // 08 §5
+  status: Readable<'idle' | 'loading' | 'ready' | 'error'>;
+  diagnostic: Readable<Diagnostic | null>;
+  retry(): Promise<void>;                    // current discriminator; a failed/mismatched schema blocks submit
 }
 
 interface ContentController {                 // `content` nodes (01 §3.6): display only, no value, state or handlers
@@ -126,6 +133,7 @@ type ComponentValidate = (ctx: { trigger: 'submit' | 'next' | 'validate'; signal
 ```
 
 - Lets a component take part in **engine-initiated** validation. When `submit()`, `next()`, or `validate()` covers this field (and it's eligible: visible, or `validateHidden`), the engine calls every registered hook. It counts them in `validating` while they run, and stores each result as that reporter's messages, exactly like `report`.
+- Controller extensions are installed before this pass even for eligible unmounted fields ([03 §6.3](./03-state-model.md#63-lazy-compile)), so initialization guards should be registered there rather than waiting for a renderer effect.
 - `report` is for findings the component makes on its own (as the user types). `onValidate` is for "check everything now", such as forcing a nested form to validate fields the user never touched.
 - With `submission.awaitAsync`, submit waits for the hooks; otherwise it returns `reason: 'validating'` while they're pending. A later trigger aborts the previous call through `signal`.
 - A hook that throws or rejects fails closed: the field gets a blocking `error` under that reporter, and `W_COMPONENT_VALIDATE_FAILED` is reported.
@@ -133,7 +141,7 @@ type ComponentValidate = (ctx: { trigger: 'submit' | 'next' | 'validate'; signal
 
 **`setBusy(token, busy)`**
 - Holds the pending-work gate ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)) for the field while any token is busy. `submit()`/`next()` wait (with `submission.awaitAsync`) or return `reason: 'validating'`. `FieldState.validating` is true meanwhile.
-- Tokens are per controller. Setting the same token twice is idempotent. All tokens are released when the controller is disposed, so an unmounted widget can't block submit forever.
+- Tokens are per controller. Setting the same token twice is idempotent. The renderer **must release every token it owns in its unmount/cleanup handler**, and cancel or invalidate its async callbacks so they cannot acquire a token after cleanup. A renderer can unmount while its node/controller remains (collapsed sections, virtualization); controller disposal is not an unmount signal. Disposal also releases all tokens as a final safeguard. Unregister `onValidate` hooks on renderer cleanup as well.
 - Use `pending()` on the field type when busy state is visible in the value (asset status). Use `setBusy` when it lives only inside the component.
 
 What the component **can't** do: create paths or controllers inside its value, take part in conditions or effects for its internal parts, or bypass the type's `value` schema on `setValue`. If parts of the value need any of that, model them as a group or an array ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)).
@@ -153,20 +161,26 @@ Each adapter binds `Readable<T>` to its framework's reactivity. That binding is 
 ### React
 
 ```tsx
+import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/with-selector';
+
 const useReadable = <T,>(r: Readable<T>) => useSyncExternalStore(r.subscribe, r.get, r.get);  // 3rd arg = getServerSnapshot
 
+type UseFieldResult<V, T> = { state: T; setValue(v: V): void; onFocus(): void; onBlur(): void; ids: FieldIds; controller: FieldController<V> };
+function useField<V = Json>(target: string | FieldController<V>): UseFieldResult<V, FieldState<V>>;
+function useField<V, K extends keyof FieldState<V>>(target: string | FieldController<V>, key: K, eq?: (a: FieldState<V>[K], b: FieldState<V>[K]) => boolean): UseFieldResult<V, FieldState<V>[K]>;
+function useField<V, T>(target: string | FieldController<V>, pick: (s: FieldState<V>) => T, eq?: (a: T, b: T) => boolean): UseFieldResult<V, T>;
 function useField<V, T = FieldState<V>>(
   target: string | FieldController<V>, pick?: keyof FieldState<V> | ((s: FieldState<V>) => T), eq?: (a: T, b: T) => boolean,
 ) {
-  const select = typeof pick === 'string' ? (s: FieldState<V>) => s[pick] as T : pick;   // key shorthand
+  const select = useMemo(() => typeof pick === 'string'
+    ? (s: FieldState<V>) => s[pick] as T : pick, [pick]);   // stable key shorthand
   const engine = useFormEngine();
   const scope = useScope();
   const c = typeof target === 'string' ? engine.field<V>(target, scope) : target;   // path (./ resolved against row scope) or a controller from renderer props
-  const sel = useRef({ select, eq }); sel.current = { select, eq };   // latest selector, no resubscribe
-  const r = useMemo(() => select
-    ? c.select(s => sel.current.select!(s), (a, b) => (sel.current.eq ?? Object.is)(a, b))
-    : c.state, [c, !select]);                      // one subscription per field
-  const state = useReadable(r);
+  const identity = useCallback((s: FieldState<V>) => s as unknown as T, []);
+  const state = useSyncExternalStoreWithSelector(
+    c.state.subscribe, c.state.get, c.state.get, select ?? identity, eq ?? Object.is,
+  );   // subscribe to c.state, not to a cached c.select wrapper
   return { state, setValue: c.setValue, ...c.handlers, ids: c.ids, controller: c };   // onFocus / onBlur
 }
 
@@ -174,7 +188,9 @@ const { state: { value, showFeedback, feedback } } = useField<string>('./city');
 const { state: dirty } = useField('/notes', s => s.dirty);   // inline is fine; re-renders only when dirty flips
 const { state: dirty2 } = useField('/notes', 'dirty');       // key shorthand, same effect
 
-function useForm<T = FormState>(select?: keyof FormState | ((s: FormState) => T), eq?: (a: T, b: T) => boolean): T;
+function useForm(): FormState;
+function useForm<K extends keyof FormState>(key: K, eq?: (a: FormState[K], b: FormState[K]) => boolean): FormState[K];
+function useForm<T>(select: (s: FormState) => T, eq?: (a: T, b: T) => boolean): T;
 const phase = useForm('phase');                              // engine.form.select('phase'); re-renders only on phase change
 const canSubmit = useForm(s => s.valid && !s.validating);
 
@@ -184,9 +200,9 @@ const canShip = useTracked(() =>
   engine.field('country').value.get() !== '' && engine.form.select('counts').get().error === 0);
 ```
 
-- `useTracked` keeps the latest `fn` in a ref, like inline selectors below, and re-renders only when its result changes. It's React-only: in Solid, Vue, Svelte 5 and Angular, plain `createMemo` / `computed` / `$derived` / `computed()` track `get()` calls directly through the adapter's read observer.
+- `useTracked` re-evaluates when `fn`/`eq` changes as well as when a tracked handle changes, and re-renders only when its selected result changes. It's React-only: in Solid, Vue, Svelte 5 and Angular, plain `createMemo` / `computed` / `$derived` / `computed()` track `get()` calls directly through the adapter's read observer.
 
-- Inline selectors are allowed: the adapter keeps the latest `select` / `eq` in a ref, so a new function each render does not resubscribe. Other adapters do the same with their equivalent.
+- Inline selectors are allowed. The React adapter uses the selector-aware external-store binding (the official shim shown above, or equivalent adapter-local semantics): a changed `select` **or** `eq` recomputes the selection even when the underlying state reference hasn't changed, without changing `c.state.subscribe` or resubscribing. With no selector it reads the whole `c.state`. A ref-only wrapper around `c.select` is not sufficient because that handle may return its cached result. `useForm` and `useTracked` require the same callback-change invalidation. Other adapters use their framework's equivalent; this adds no core dependency.
 - `select` memoizes: the derived `get()` returns the **same result object** while the input `FieldState` is unchanged, or while `eq(prev, next)` holds (default `Object.is`). `useSyncExternalStore` requires this. Selectors returning new objects need `eq` (for example `shallowEqual`).
 - **Server rendering:** `get` doubles as `getServerSnapshot`, since the engine state is the same on server and client after `resume` ([09 §9](./09-loading-and-submission.md#9-server-rendering)). Every adapter must provide the equivalent (Vue `onServerPrefetch`, Solid/Svelte SSR reads `get()` once and doesn't subscribe).
 - `<FormProvider engine>`, `<ScopeProvider path>` (rows and data-scoped groups), and `<FormRenderer renderers />`.
@@ -282,7 +298,7 @@ Steps are `group` nodes with `step: true`. Their presentation (tabs, cards, etc.
 ```ts
 next(opts?: { confirm?: string[] }): Promise<{
   ok: boolean;
-  reason?: 'errors' | 'gated' | 'validating' | 'assets-pending' | 'last-step';
+  reason?: 'errors' | 'gated' | 'validating' | 'assets-pending' | 'schema' | 'last-step';
   gates?: GateStop[];                       // 09 §4
 }>;
 ```
@@ -355,9 +371,9 @@ createFormEngine({ …, idPrefix: 'checkout' });   // optional; see below
 
   | `reason` | Default |
   |----------|---------|
-  | `errors`, `external`, `conflicts` | focus `firstInvalid()`: the field itself, or for a group/array its first focusable child, else the container's own registered element. Nothing focusable → no-op; the failure stays in the result |
+   | `errors`, `external`, `conflicts`, `schema` | focus `firstInvalid()`: the field itself, or for a group/array its first focusable child, else the container's own registered element. Nothing focusable → no-op; the failure stays in the result |
   | `gated`, `validating`, `assets-pending` | nothing (the host shows its own confirm/progress UI) |
-  | `transform` | nothing (dev-mode log) |
+   | `transform`, `target`, `x-…` | nothing (the host shows failure/retry UI; diagnostics where applicable) |
 
   Passing your own `onSubmitFailed` replaces the default.
 

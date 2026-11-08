@@ -209,10 +209,10 @@ Some config keys imply validation rules. The compiler adds them **before** the f
 
 | Config key | Implied rule (06 §2) | Payload schema ([09 §6](./09-loading-and-submission.md#6-json-schema-export-of-the-submitted-data)) |
 |------------|----------------------|------------------|
-| `text.minLength` / `maxLength` | `min-length` / `max-length` (an empty string passes `min-length`; use `required` to demand input) | `minLength` / `maxLength` |
+| `text.minLength` / `maxLength` | `min-length` / `max-length` (an empty string passes `min-length`; use `required` to demand input) | `minLength` / `maxLength`, with an empty-string branch for optional text (09 §6) |
 | `number.min` / `max` | `min` / `max` | `minimum` / `maximum` |
 | `number.step` | `step` | `multipleOf` |
-| `date-time.min` / `max` | `min` / `max` (compared as described under value shapes) | `formatMinimum` / `formatMaximum` for literal bounds; expression bounds go to `x-formgraph-unexported` |
+| `date-time.min` / `max` | `min` / `max` (compared as described under value shapes) | `formatMinimum` / `formatMaximum` only for literal bounds with compatible exported formats/comparators; otherwise `x-formgraph-unexported` (09 §6) |
 | `multi-choice.minSelected` / `maxSelected` | `min-items` / `max-items` | `minItems` / `maxItems` |
 | any options source | `in-options` (unless `validateInOptions: false`, 13 §4.2) | `enum` for static sources, union of all lists for `map`, omitted for `provider` |
 | `asset.accept` / `maxBytes` | `accept` / `max-bytes` | not exported |
@@ -442,7 +442,7 @@ The contract package exports **two** sets of types:
 | Macro nodes | allowed anywhere a node is (`MacroNode`, 15 §2) | none |
 | Short forms | bare `options` array, bare `string` text (15 §6) | expanded |
 
-`InputNode = Field | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | MacroNode`, using the generic container types above. `DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `FormContract` with `structure: InputNode[]` and the short forms of 15 §6 allowed. `expandContract(input, { macros }) → { contract, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
+`InputNode = Field | Group<InputNode> | ArrayNode<InputNode> | DynamicGroup | Content | MacroNode`, using the generic container types above. `DynamicGroup` has no inline children (its sub-schema comes from a `schemaSource`), so it isn't generic. `FormContractInput` is `FormContract` with `structure: InputNode[]` and the short forms of 15 §6 allowed. `expandContract(input, { macros }) → { contract, sources, diagnostics }` is the only bridge ([15 §8](./15-macros.md#8-tooling)).
 
 ## 6. Document
 
@@ -476,7 +476,7 @@ export interface FormContract extends Extensible {
 ### 7.1 Contract load pipeline
 
 ```
-loadContract(json, { registry, strict, limits, allow }) → Promise<LoadResult>   // { ok, schema?, diagnostics } (18 §1); limits §7.4, allow: AllowList (05 §4)
+loadContract(json, { registry, strict, limits, allow, textFormat }) → Promise<LoadResult>   // { ok, schema?, diagnostics } (18 §1); textFormat checker: 10 §2.1; limits §7.4, allow: AllowList (05 §4)
   1. detect          size check first (string: bytes > limits.contractBytes; object: bounded walk over
                      nodes and nesting, limits.nodes / limits.jsonDepth, stopping at the first excess)
                      → E_LIMIT_EXCEEDED; then read schemaVersion; unsupported major → E_UNSUPPORTED_VERSION
@@ -492,7 +492,7 @@ loadContract(json, { registry, strict, limits, allow }) → Promise<LoadResult> 
 
 Steps 1–6 live in `@formgraph/contract` and need only a `Registry` (for evaluators, field types, and macros, [08 §1](./08-async-data-and-registries.md#1-registries)), not an engine. CMS previews and tests call them directly. Step 7 lives in core. Dynamic sub-schemas ([08 §5](./08-async-data-and-registries.md#5-dynamic-sub-forms)) go through steps 3–7 and are interpreted under the parent contract's `schemaVersion` (including the unknown-key rule above). Attaching one merges its edges into the graph ([04 §5.4](./04-paths-and-dependency-graph.md#54-dynamic-sub-schemas)).
 
-Translation checks at load (`E_INVALID_MESSAGE`, `W_MISSING_TRANSLATION`, `W_UNUSED_TRANSLATION`) cover inline `locales` only. Bundles from a `localeSourceId` are loaded later and aren't checked here.
+Message syntax checks (`E_INVALID_MESSAGE`) cover contract text/defaults and inline `locales`, using the formatter checker available to loading ([10 §2.1](./10-localization.md#21-formatter)). Translation coverage checks (`W_MISSING_TRANSLATION`, `W_UNUSED_TRANSLATION`) cover inline `locales` only. Bundles from a `localeSourceId` are loaded later and checked on arrival.
 
 **Diagnostic pointers.** `location.pointer` ([17 §1](./17-diagnostics.md#1-shape)) always points into the **input contract after migration** (the output of step 2, as the author wrote it otherwise). Normalization and expansion maintain a pointer map from every output location back to its input location ([15 §8](./15-macros.md#8-tooling)); diagnostics from validate-core and compile are translated through it. Nodes a macro generated point at the macro node and carry `location.source`. Migration steps report each rewrite's original (pre-migration) pointer as `related`.
 

@@ -56,7 +56,7 @@ Patterns come from untrusted contracts ([05 §4](./05-expressions.md#4-security-
 
 ```ts
 interface RegexEngine {
-  linear?: boolean;            // true for linear-time engines; skips the nested-quantifier check
+  linear?: boolean;            // trusted host guarantee: test cost is bounded by source length × input length
   compile(source: string, flags: 'u'): { test(input: string): boolean };   // throws on invalid pattern
 }
 registry.regex = re2Engine;   // e.g. a re2-wasm wrapper: linear time
@@ -64,10 +64,10 @@ registry.regex = re2Engine;   // e.g. a re2-wasm wrapper: linear time
 
 - **Length cap:** a source longer than `limits.regexLength` (default 1,000, [01 §7.4](./01-schema-contract.md#74-limits)) is `E_LIMIT_EXCEEDED` at compile.
 - **Literal string only.** A `pattern` rule's `value` is a plain `string`, never an `Expression` or object, so every pattern is checked at compile. An expression is `E_DYNAMIC_PATTERN`; a pattern the engine can't compile is `E_INVALID_PATTERN`.
-- **JSON Schema semantics:** the pattern matches anywhere in the value (unanchored); write `^…$` for a whole-value match. It is always compiled with the `u` flag and no others, so `fromJsonSchema` / `toPayloadSchema` carry it unchanged and client and server run the same check. Case-insensitive matching is written into the pattern (`[Aa]`) or done by a normalize step.
+- **JSON Schema semantics:** the pattern matches anywhere in the value (unanchored); write `^…$` for a whole-value match. It is always compiled with the `u` flag and no others. `fromJsonSchema` still subjects imported patterns to the safety checks; `toPayloadSchema` carries accepted patterns unchanged. Registered engines must preserve these matching semantics for accepted patterns. Case-insensitive matching is written into the pattern (`[Aa]`) or done by a normalize step.
 - **Input cap:** a value longer than `limits.regexInputLength` (default 10,000 chars) fails the rule (blocking error) without running the regex.
-- **Default engine** is native `RegExp` with the length caps only. It does **not** prevent catastrophic backtracking; hosts loading contracts from sources they don't control should register a linear-time engine.
-- **Nested-quantifier check** (best effort): patterns such as `(a+)+` are `W_UNSAFE_PATTERN` (*strict → error*). Known misses: overlapping alternation (`(a|a)*`), adjacent quantifiers (`a*a*`), backreferences. Skipped when the engine has `linear: true`.
+- **Bounded default, no heuristic safety claim.** The dependency-free default parses a restricted grammar before using native `RegExp`: concatenated single-character atoms (literals, fixed-width character escapes, `.`, character classes) with optional start/end anchors only. Groups, alternation, repetition (including bounded quantifiers), lookaround and backreferences are rejected with `E_UNSAFE_PATTERN`, in both strict and non-strict modes. Unknown constructs are rejected, not passed through. With the source/input caps, accepted matches cost at most O(source length × input length). `^(a|aa)+$` and `(a+)+` are rejected before matching.
+- **Full patterns require a bounded engine.** Hosts may register a linear-time engine (for example an RE2 wrapper) with `linear: true`; it may accept a larger grammar, rejecting unsupported syntax with `E_INVALID_PATTERN`. A replacement without this guarantee is still restricted to the default grammar. Plugins/engines are trusted host code; contracts cannot opt out of the safety requirement. No regex dependency is added to slim core.
 - **Fail closed:** a validator or rule `when`/`value` that throws or exceeds `limits.evalSteps` yields a blocking `error` Notice (plus `W_FUNCTION_THREW` / `W_EVAL_BUDGET`); same for `required` ([05 §4](./05-expressions.md#4-security-model)).
 - `registry.regex` is a singleton slot, inherited from the parent registry ([08 §1](./08-async-data-and-registries.md#1-registries)).
 
@@ -221,7 +221,7 @@ engine.unconfirm(gate: string): void;
 ```
 
 - **One result for every gate.** `gates` lists each gate that stopped the submit, so the host can show one dialog with a section per gate. Errors are checked first: while there are errors, the result is `reason: 'errors'`.
-- **Confirmation lifetime.** A confirmation records the notices it covered, identified by `(path, rule, code)`. It stays valid while the gate's current notices are a **subset** of those. Editing an unrelated field, or fixing a warning, keeps it; a new or changed notice in that gate drops it. `reset` and `restore` clear all confirmations. They aren't in drafts or `exportState`.
+- **Confirmation lifetime.** A confirmation records a canonical snapshot of the notices it covered: stable row-key location, source, rule, code, subPath, severity/gate, original message template and evaluated interpolation parameters, plus the resolved message. It stays valid while the gate's current notice snapshots are a **subset** of those (independent of list order). Editing an unrelated field, or fixing a warning, keeps it; a new notice, changed message/parameter or locale-resolved text drops it, even when `(path, rule, code)` is unchanged. `reset` and `restore` clear all confirmations. They aren't in drafts or `exportState`.
 - **Audit.** Confirmed gates reach the submit target and outbound transformers as `confirmed: string[]` ([08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)), so the server can record what the user confirmed.
 - **State.** `FormState.gates: Record<string, { policy; count; confirmed }>` ([03 §5](./03-state-model.md#5-field-meta-and-form-status)) lets the UI show "2 legal notices need confirmation" without calling submit.
 - **Only warnings are gated.** `error` always blocks and `info` never does. That keeps "invalid" meaningful; see [16 §14](./16-cookbook.md#14-submit-while-invalid) for deliberately submitting invalid data.

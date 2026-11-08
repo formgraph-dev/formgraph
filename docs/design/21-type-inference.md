@@ -46,7 +46,7 @@ interface RegistryEntries {
 - **Types come from the schemas.** `value`, `config`, `ui` and validator `param` types are `StandardSchemaV1.InferOutput<…>` of the registered schemas, so nothing is written twice. A field type's `empty` must be assignable to its `value` type.
 - **Same runtime object.** `fieldType(…)` etc. register on the receiver and return it re-typed. The old `registry.fieldTypes.register(…)` stays, untyped (§6). Duplicate ids still throw `E_REGISTRY_DUPLICATE`.
 - **Children.** `createRegistry({ parent })` has type `Parent & Own`. A child that overrides a parent id must use a schema whose output is assignable to the parent's (otherwise a type error), so contracts typed against the parent stay correct.
-- **Plugins.** A plugin declares its entries in `registers`, and `registry.plugin(factory)` returns the registry re-typed with them plus the plugin's options and members. `FormEngineWith<R>` carries the plugin members from the registry type, so a contract is checked against plugin-provided types and validators with no extra step. The default entry's registry type includes the built-in plugins (`asset`, `multi-asset`, `icu` formatters, …).
+- **Plugins.** A plugin declares its entries in `registers`, and `registry.plugin(factory)` returns the registry re-typed with them plus the plugin's options and members. Contracts see plugin-provided types and validators with no extra step. Engine members use `FormEngineWith<R, V, O>`, filtering by per-engine options: literal `false` removes the plugin; a possibly disabled plugin has optional members ([18 §5](./18-api-reference.md#5-built-in-plugin-members)). The default entry adds built-ins before filtering (`asset`, `multi-asset`, `icu` formatters, …).
 - **Key-only registries** (providers, sources, transformers, …) contribute their ids so the contract can be checked. Their payload types are in §3.
 
 ## 2. Typed contracts
@@ -54,15 +54,18 @@ interface RegistryEntries {
 ```ts
 const contract = defineContract(registry, {
   schemaVersion: '1.0',
-  nodes: [
-    { kind: 'field', id: 'name', fieldType: 'text', required: true },
+  formId: 'profile',
+  structure: [
+    { kind: 'field', id: 'name', fieldType: 'text', conditions: { required: true } },
     { kind: 'field', id: 'sig', fieldType: 'x-signature', minStrokes: 3 },
-    { kind: 'array', id: 'addresses', item: [{ kind: 'field', id: 'city', fieldType: 'text' }] },
+    { kind: 'array', id: 'addresses', item: { kind: 'group', id: 'address', children: [
+      { kind: 'field', id: 'city', fieldType: 'text' },
+    ] } },
   ],
 });
 ```
 
-- `defineContract<const C>(registry, contract)` uses a `const` type parameter, so no `as const` is needed. At runtime it returns `contract` unchanged (zero bytes beyond the call).
+- `defineContract(registry, contract)` uses `const` type parameters, so no `as const` is needed. It returns `TypedContract<E, C, L>`: the literal input plus phantom registry entries and inference limits. At runtime it returns `contract` unchanged; no metadata property is written. The brand makes the registry's value schemas part of the contract's type, so two registries with the same field-type id but different schemas infer different values. Full signatures are in [18 §1](./18-api-reference.md#1-loading-a-contract).
 - **Checked against the registry:** `fieldType`, validator `type`, `severity`, `submission.gates` keys, `macro`, `providerId`, `sourceId`, `schemaSourceId`, `entitySourceId`, `targetId`, transformer ids. A typo is a type error instead of a validate-core diagnostic.
 - Each field's flat config keys and `ui` are checked against its type's `config` and `ui`. A `fallback` is checked against its core target type ([01 §3.5](./01-schema-contract.md#35-contract-fallbacks-for-custom-types)). Validator `param` is checked against the validator.
 - `schemaVersion` must be the current major. Older contracts go through the runtime path and migrations ([01 §7.2](./01-schema-contract.md#72-migrations)).
@@ -72,14 +75,15 @@ const contract = defineContract(registry, {
 
 ```ts
 const res = await loadContract(contract, { registry });   // LoadResult<typeof contract>
+if (!res.ok) throw new ContractLoadError(res.diagnostics);
 const engine = createFormEngine({ contract: res.schema, registry });
-// FormEngine<Values, Paths>
+// FormEngineWith<typeof registry, Values, undefined, PayloadOf<typeof contract>>
 
 type Values = ValuesOf<typeof contract>;
 // { name: string; sig: string | null; addresses: Array<{ city: string }> }
 
 engine.field('addresses[0].city');      // FieldController<string>
-engine.field('sig').value;              // string | null
+engine.field('sig').value.get();        // string | null (value itself is a Readable)
 engine.setValue('name', 42);            // type error
 engine.getValues();                     // Values
 ```
@@ -91,11 +95,15 @@ engine.getValues();                     // Values
 | field | its field type's `value` |
 | group | object of its children (layout-only groups are flattened, as in 03) |
 | array | `Array<item object>` |
-| `hidden: 'exclude'` or optional by condition | key stays required in `getValues()` (resolved values always exist); the **payload** type marks it optional |
-| dynamic group | union over its inline `schemas` with the discriminator literal; `Json` when schemas come from a `schemaSource` |
+| array with a scalar field item | `Array<field value>` |
+| content | no value or key |
+| `whenHidden: 'exclude'` or optional by condition | key stays required in `getValues()` (resolved values always exist); the **payload** type marks it optional |
+| dynamic group | runtime `schemaSourceId` output widens to `Json`; there is no inline `schemas` contract key. A scoped group widens its own subtree; a transparent group widens the containing object whose keys it can add |
 | macro node | its macro's declared `output` node type; `Json` when the macro declares none (declaring is optional) |
 
 `PathsOf<Values>` gives `DataPath` literals: `'name'`, `'addresses'`, `` `addresses[${number}]` ``, `` `addresses[${number}].city` ``.
+
+`ValuesOf<C>` and `PayloadOf<C>` first extract the registry entries, literal input and caps from `TypedContract<E, Input, L>`, then walk the input using those entries. An unbranded/unknown input yields `Json`. `CompiledSchema<C>` retains that same phantom contract type through loading; it never reconstructs types from runtime registry ids. Inference limits remain attached to the brand through both stages.
 
 - **Typed overloads, untyped fallback.** `field`, `setValue`, `array`, `revert`, `touch` take `Paths` with the value type looked up from `Values`. A string that isn't a known path literal (relative `./` refs, `/` PathRefs, computed strings) falls back to `FieldController<Json>`.
 - **Payload.** Without an outbound transformer, `serialize()` and the submit target receive `PayloadOf<C>`: values after `serializeAs` renames and hidden/disabled policies. With a transformer, the transformer's output type. `SubmitTarget` and `OutboundTransformer` are generic over it ([08 §1.1](./08-async-data-and-registries.md#11-shared-function-shapes)).
@@ -105,8 +113,9 @@ engine.getValues();                     // Values
 
 ```ts
 const res = await loadContract(jsonFromServer, { registry });   // LoadResult<unknown>
+if (!res.ok) throw new ContractLoadError(res.diagnostics);
 createFormEngine({ contract: res.schema, registry });          // FormEngine<Json, string>
-createFormEngine<MyValues>({ … });                             // host asserts a shape; no check
+// Hosts may assert a value shape explicitly at their boundary; it is not inferred or validated by a type argument.
 ```
 
 `FormEngine` with no type arguments is `FormEngine<Json, string>`, the same API as before this doc.

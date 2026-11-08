@@ -46,12 +46,16 @@ import { createFormEngine, createRegistry } from '@formgraph/engine/core';
 import { icu } from '@formgraph/engine/icu';
 createFormEngine({ contract, registry: createRegistry().plugin(icu) });
 
-// or reuse the host's parser, so only one ships:
-createFormEngine({ …, i18n: { resolve: i18nextResolver, format: i18nextFormat } });
-type TextFormat = (message: string, params: Record<string, Json>, locale: LocaleTag) => string;
+// or reuse the host's parser, so only one ships; make its syntax checker available at load:
+const res = await loadContract(json, { registry, textFormat: i18nextFormat });
+if (!res.ok) return showErrors(res.diagnostics);
+createFormEngine({ contract: res.schema, registry, i18n: { resolve: i18nextResolver } });
+type TextFormat = ((message: string, params: Record<string, Json>, locale: LocaleTag) => string) & {
+  validate(message: string): void;   // synchronous parse-only check; throws on invalid/unsupported syntax
+};
 ```
 
-- Precedence: `i18n.format` if given, else the `icu` plugin, else core `{name}`.
+- Precedence: `i18n.format` if given, else the custom `textFormat` retained by the compiled schema, else the `icu` plugin, else core `{name}`. `loadContract` chooses its checker from `opts.textFormat`, the registry's built-in `icu` factory, or core `{name}`, in that order. The chosen checker/formatter identity is retained in `CompiledSchema`; custom syntax never has to pass the core parser first. If engine setup selects a different formatter (including a plugin's `setFormat`), `createFormEngine` revalidates all contract/default/inline-bundle messages with it before exposing a usable engine; invalid text throws `E_INVALID_MESSAGE`, missing syntax support throws `E_PLUGIN_MISSING`. Hosts should pass custom formatters to loading so failures arrive as load diagnostics instead of creation errors.
 - **Never raw syntax.** With core `{name}` only, a message using `plural`, `select`, `selectordinal`, `number`, `date` or `time` fails with `E_PLUGIN_MISSING` naming `@formgraph/engine/icu`: at compile for contract text, or when a `LocaleSource` bundle arrives (phase `runtime`; that key falls through as if missing).
 - Built-in validator messages in slim core use non-plural wording (`"Minimum items: {count}"`). The `icu` plugin replaces them with pluralized versions (`"{count, plural, one {Add at least # item} other {Add at least # items}}"`).
 - The shipped i18next and FormatJS adapters export a `format` alongside the resolver.
@@ -138,7 +142,7 @@ type LocaleSource = AsyncSource<{ locale: LocaleTag }, LocaleBundle | null>;   /
 
 - **Locale switches touch text only.** Values, meta, validity, and history are untouched. Validation messages are re-resolved, not re-run.
 - **Macros** that generate their **own** text (not text passed in as arguments) must emit `LocalizableString`s with keys namespaced by the macro (for example `macro.choice-with-other.otherLabel`) and an English `default`. The contract can then translate them like any other key ([15](./15-macros.md)).
-- **Load-time checks:** a `key` that no bundle provides for some declared locale is a warning (`W_MISSING_TRANSLATION`, `strict`: error), since `default` will show instead. A bundle key that no node references is `W_UNUSED_TRANSLATION`. Bundle values are parsed by the active formatter (§2.1) at load time, so a malformed message fails early (`E_INVALID_MESSAGE`).
+- **Load-time checks:** a `key` that no bundle provides for some declared locale is a warning (`W_MISSING_TRANSLATION`, `strict`: error), since `default` will show instead. A bundle key that no node references is `W_UNUSED_TRANSLATION`. All contract/default/inline-bundle messages are checked by the load formatter's `validate` (§2.1), so a malformed message fails early (`E_INVALID_MESSAGE`). Engine-only formatter overrides are checked again at creation, not assumed to have existed during `loadContract`. Dynamic sub-schemas and arriving locale bundles use the engine's active checker.
 - **Bundles from a `LocaleSource`** can't be checked at load time. The same checks run when each bundle arrives (phase `runtime`): `W_MISSING_TRANSLATION` and `W_UNUSED_TRANSLATION` are reported as dev warnings (never errors, even under `strict`, since the form is already running), and a malformed message is `E_INVALID_MESSAGE` for that key only. The key then falls through as if it were missing.
 - **Supported ICU subset.** The `icu` plugin (§2.1) supports exactly:
   - simple arguments `{name}`;

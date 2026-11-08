@@ -190,10 +190,10 @@ values(p) = isComputed(p) && !overridable(p) ? computed(p)     // replaces all l
           : default[p]
 ```
 
-`has` is `Object.hasOwn` along the path. Because of this:
+`has` uses `Object.prototype.hasOwnProperty.call(object, key)` at each segment along the path (ES2020-compatible). Because of this:
 - The user clears a loaded value: `current.email = ''` (or `null`). The cleared value wins.
 - An explicit `null` in `loaded` hides the default. An **absent** key falls through to `default`, unless the load config says `missing: 'empty'` ([09 §2.1](./09-loading-and-submission.md#21-missing-vs-null)).
-- **`undefined` is never stored** in `current` (it can't survive a JSON snapshot, [09 §8](./09-loading-and-submission.md#8-snapshots-drafts)). Clearing stores the field type's empty value (`null`, `''`, `false`, `[]`), the same as the `clear` action ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). `setValue(p, undefined)` is `E_UNDEFINED_VALUE`. To *revert* to the lower layer, call `engine.revert(path)`, which **deletes** the key.
+- **`undefined` is never stored** in `current` (it can't survive a JSON snapshot, [09 §8](./09-loading-and-submission.md#8-snapshots-drafts)). Clearing stores the field type's empty value (`null`, `''`, `false`, `[]`), the same as the `clear` action ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). `setValue(p, undefined)` is `E_UNDEFINED_VALUE`. To *revert* to the lower layer, call `engine.revert(path)`: delete the key outside arrays; reconstruct only the target inside arrays (§3.2).
 
 ### 3.1 Resolution granularity
 
@@ -211,6 +211,8 @@ Writing `addresses[1].city` when `current` has no `addresses`:
 3. Store the whole array in `current.addresses`.
 
 From then on, `addresses` comes entirely from `current`. Reloading interacts with this through the policy in [09 §3](./09-loading-and-submission.md#3-reload-policy).
+
+Atomic storage does not widen the target of a command. `revert` or an effect's `reset` on an array descendant restores only that target in a cloned resolved array, preserving other rows and cells. Baseline rows are matched by row key, never by their current index; a new row with no baseline uses its field defaults. The whole `current` array override is removed only if the resulting array equals its baseline. Targeting the array itself still reverts or resets the whole array ([07 §2](./07-effects-and-computed.md#2-write-origins-and-effect-triggers)).
 
 Row keys (see [04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity)) are stored in a parallel structure, `meta.rows[arrayPath]: RowKey[]`, never inside the user data.
 
@@ -318,11 +320,13 @@ Compiling splits into a cheap eager part and a lazy part:
 
 "First access" is a controller lookup, a subscription, or a read by a dependent. Nodes in unmounted steps, collapsed sections and dynamic sub-schemas pay only the eager part until then. The graph has to be complete up front, because a write anywhere must find all dependents, including unmounted ones; so do defaults, since they decide values and dirty. Hidden/disabled state is always eager because it decides eligibility, serialization and `firstInvalid()`. `submit()`, `validate()` and `serialize()` first force-compile whatever is missing for eligible fields (validators, option state), start option loads that gate validity ([13 §4.2](./13-option-sources-and-cascading.md#42-built-in-in-options-validator)) and async validators with no settled result for the current value ([06 §4](./06-validation.md#4-async-validation)); with `awaitAsync`, submit awaits them. `firstInvalid()` reads compiled validators, so it relies on this force-compile.
 
+Engine-initiated validation also creates each eligible field's controller and installs its registered controller extensions **before** invoking component validation hooks. A lifecycle plugin can therefore install a fail-closed guard even when no renderer has mounted; it must not rely on a renderer effect to register the first guard ([16 §22](./16-cookbook.md#22-another-engine-as-a-custom-field)).
+
 ## 7. Engine write API (core)
 
 ```ts
 engine.setValue(path, value, { runEffects = true, origin? })   // origin: registered x- origins only (07 §2.1)
-engine.revert(path)                 // remove from current
+engine.revert(path)                 // restore target's baseline; array descendants preserve other cells (§3.2)
 engine.reset({ keepLoaded = true })   // see below
 engine.array(path)                  // ArrayHandle, see below
 engine.touch(path, { validate? })   // mark touched (shows messages); container paths touch every descendant; validate (default true)
@@ -439,10 +443,8 @@ type PluginTx<S extends SliceAccess> =                        // members exist o
 ```
 
 ```ts
-// typing: inferred from the registry's type (21 §1), no global augmentation
-function createFormEngine<const R extends Registry>(
-  opts: FormEngineOptions & { registry: R; plugins?: PluginOptionsOf<R> }): FormEngineWith<R>;
-type FormEngineWith<R extends Registry, V = Json> = FormEngine<V, PathsOf<V>> & PluginMembers<R>;   // V: 21 §3   // for passing engines around
+// typing: registry + typed compiled contract + per-engine options (18 §1–2, §5)
+// FormEngineWith<R, V = Json, O = undefined> filters members by enabled plugins.
 
 const audit = definePlugin('x-audit', {
   registers: { validators: { 'x-audit-trail': auditTrail } },
@@ -458,7 +460,7 @@ engine.plugins['x-audit'].flush();   // typed AuditApi
 ```
 
 - **Registration.** `registry.plugin(factory)` (or `createRegistry({ plugins: [...] })`) registers `registers` on the same append-only registry (a clash throws `E_REGISTRY_DUPLICATE`, naming the plugin) and records the factory; the same name twice in one registry throws `E_PLUGIN_DUPLICATE`. `plugins: { name: false }` skips one plugin for an engine (a contract that needs its types then fails with `E_PLUGIN_MISSING`). Plugin code has no way to register types or validators at `setup`, so there is one registration path.
-- `methods` are exposed as `engine.plugins[name]`. Only built-in plugins also attach top-level members (`engine.history`, `engine.snapshot`/`restore`, `engine.wizard`, `assets`/`icu` have none); third-party plugins can't add top-level names, so they never collide with core or future built-ins. `PluginMembers<R>` maps each recorded plugin's `Members` to `engine.plugins[name]`, and for built-in plugins also to top level. `engine.plugins` itself has the named type `PluginMap<R>` (`{ [N in PluginName<R>]: MembersOf<R, N> }`), so it can be referenced in helper signatures without restating the plugin list; the default entry's `createFormEngine` returns all built-ins typed ([18 §5](./18-api-reference.md#5-built-in-plugin-members)).
+- `methods` are exposed as `engine.plugins[name]`. Only built-in plugins also attach top-level members (`engine.history`, `engine.snapshot`/`restore`, `engine.wizard`, `assets`/`icu` have none); third-party plugins can't add top-level names, so they never collide with core or future built-ins. `PluginMembers<R, O>` and `PluginMap<R, O>` derive the top-level and namespaced members from both registry `R` and per-engine options `O`. Literal `false` removes a plugin's members; options that may disable it make those members optional. With no overrides (`O = undefined`), all registered plugins are enabled. The default entry adds built-ins before this filtering, never after it ([18 §5](./18-api-reference.md#5-built-in-plugin-members)).
 - The core `ORIGIN_POLICY` table holds core origins only ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). Plugin-owned built-in origins are registered at install: `history` registers `history`, `drafts` registers `restore`. Third-party plugins register `x-` origins only and name meta slices `<plugin>-…` (the plugin name already starts with `x-`).
 - Core never refers to plugin behaviour by name. It exposes policy flags and hooks that plugins act on or implement:
 

@@ -7,17 +7,30 @@ Every public signature of `@formgraph/engine` in one place. Semantics live in th
 ## 1. Loading a contract
 
 ```ts
-defineContract<const C, const L extends InferenceLimits = {}>(registry: Registry<E>, contract: C & ContractFor<E>, opts?: { inference?: L }): C;   // identity at runtime; type-checks ids/config (21 §2); L: type-only caps (21 §5.1)
+declare const contractTypes: unique symbol;       // type-only, no runtime property
+type TypedContract<E extends RegistryEntries, C, L extends InferenceLimits = {}> = C & {
+  readonly [contractTypes]: { entries: E; input: C; inference: L };
+};
+function defineContract<const E extends RegistryEntries, const C, const L extends InferenceLimits = {}>(
+  registry: Registry<E>, contract: C & ContractFor<NoInfer<E>>, opts?: { inference?: L },
+): TypedContract<E, C, L>;                         // identity at runtime (21 §2); retains schemas + type-only caps
 
-loadContract<C = unknown>(                       // 01 §7.1; never throws for contract problems; C inferred from a defineContract result (21 §3)
-  input: string | Json | C,
-  opts: {
-    registry: Registry; strict?: boolean; limits?: Limits; allow?: AllowList;
-    contractSchema?: StandardSchemaV1<unknown, FormContractInput>;   // swap the contract validator (01 §7)
-  },
-): Promise<LoadResult>
+interface LoadOptions<R extends Registry = Registry> {
+  registry: R; strict?: boolean; limits?: Limits; allow?: AllowList;
+  contractSchema?: StandardSchemaV1<unknown, FormContractInput>;
+  textFormat?: TextFormat;                        // parse-only validation available before engine creation (10 §2.1)
+}
+function loadContract<const E extends RegistryEntries, const C, const L extends InferenceLimits>(
+  input: TypedContract<E, C, L>, opts: LoadOptions<Registry<NoInfer<E>>>,
+): Promise<LoadResult<TypedContract<E, C, L>>>;
+function loadContract(input: unknown, opts: LoadOptions): Promise<LoadResult<unknown>>;   // runtime JSON/string; never infers literals from unchecked input
 
-type LoadResult =
+interface CompiledSchema<C = unknown> {           // runtime shape: 01 §7.3
+  readonly [contractTypes]: C;                    // phantom: original typed contract, not just its input tree
+  // compiled nodes, graph, stats, refs and formatter identity; no runtime brand property
+}
+type RegistryFor<C> = C extends { readonly [contractTypes]: { entries: infer E extends RegistryEntries } } ? Registry<E> : Registry;
+type LoadResult<C = unknown> =
   | { ok: true;  schema: CompiledSchema<C>; diagnostics: Diagnostic[] }   // warnings only; CompiledSchema<unknown> → engine widens to Json
   | { ok: false; diagnostics: Diagnostic[] };                          // at least one error (17 §1)
 ```
@@ -33,28 +46,28 @@ Links: [01 §7.1](./01-schema-contract.md#71-contract-load-pipeline), [`Limits`]
 ## 2. Creating an engine
 
 ```ts
-createFormEngine<const R extends Registry>(                  // sync; throws only for the stats/refs recheck
-  options: FormEngineOptions & { registry: R; plugins?: PluginOptionsOf<R> },   // plugins: per-plugin options by name, or false to skip (03 §8)
-): FormEngineWith<R, V>                                      // V from options.contract (21 §3); default entry adds the built-ins to R
-createFormEngineFrom<const R extends Registry>(              // convenience: loadContract + createFormEngine
+function createFormEngine<const R extends Registry, C = unknown, const O extends PluginOptionsOf<R> | undefined = undefined>(
+  options: FormEngineOptions<R, C, O>,
+): FormEngineWith<R, ValuesOf<C>, O, PayloadOf<C>>;           // sync; retain value + payload inference; default entry adds built-ins before O
+function createFormEngineFrom<const R extends Registry, const O extends PluginOptionsOf<R> | undefined = undefined>(
   input: string | Json,
-  opts: Omit<FormEngineOptions, 'contract'> & { registry: R; plugins?: PluginOptionsOf<R>; contractSchema?: StandardSchemaV1<unknown, FormContractInput> },
-): Promise<FormEngineWith<R>>   // loads with the same registry/limits/allow/strict; ok:false → throws ContractLoadError { diagnostics }; warnings → onDiagnostic
+  opts: Omit<FormEngineOptions<R, unknown, O>, 'contract'> & { contractSchema?: StandardSchemaV1<unknown, FormContractInput>; textFormat?: TextFormat },
+): Promise<FormEngineWith<R, Json, O>>;   // runtime input widens; same registry/limits/allow/strict; ok:false → throws ContractLoadError { diagnostics }; warnings → onDiagnostic
 
-interface FormEngineOptions {
+interface FormEngineOptions<R extends Registry = Registry, C = unknown, O extends PluginOptionsOf<R> | undefined = PluginOptionsOf<R> | undefined> {
   contract: CompiledSchema<C>;                    // from loadContract (§1); stats/refs rechecked → E_LIMIT_EXCEEDED / E_NOT_ALLOWED, phase call (01 §7.4)
-  registry: Registry;                             // wrapped in a per-engine child (08 §1)
+  registry: R & RegistryFor<NoInfer<C>>;             // compatible with the typed contract's entries; per-engine child (08 §1)
   context?: Json;                                 // $context for expressions (05)
   platform?: Partial<Platform>;                   // now, timers, nextFrame, dev; defaults from globalThis; dev: guarded __DEV__/NODE_ENV, else false (11 §6)
   params?: Record<string, Json>;                  // e.g. route id for entity loading (09 §1)
   limits?: Limits;                                // 01 §7.4
   allow?: AllowList;                              // 05 §4
   strict?: boolean;                               // strict → error warnings (17 §1)
-  plugins?: PluginOptionsOf<R>;                   // per-plugin options by name, or false to skip (03 §8)
+  plugins?: O;                                    // inferred per-engine options; false removes that plugin's members (03 §8)
   history?: { limit?: number; coalesceMs?: number };   // history plugin config, default entry (03 §6.2)
   i18n?: { locale?: LocaleTag; fallbackLocales?: LocaleTag[]; resolve?: TextResolver; format?: TextFormat };   // 10 §2
   resume?: EngineState;                           // server rendering (09 §9)
-  server?: boolean;                               // server-safe mode; automatic without `window` (09 §9)
+  server?: boolean;                               // explicit server-safe mode, default false; no window detection (09 §9)
   idPrefix?: string;                              // FieldIds prefix (11 §8)
   testIds?: { prefix?: string; format?: (path: DataPath) => string } | false;   // e2e selectors, state.testId (11 §8.1)
   onSubmitFailed?(result: SubmitResult & { ok: false }): void;   // every failed submit; adapters install a default (11 §8)
@@ -67,13 +80,14 @@ Links: [01 §7](./01-schema-contract.md#7-versioning-and-load-time-validation), 
 ## 3. `FormEngine` (core)
 
 ```ts
-interface FormEngine<V = Json, Paths extends string = string> {   // V = ValuesOf<C>, Paths = PathsOf<V> for typed contracts (21 §3)
+interface FormEngine<V = Json, Paths extends string = string, Payload = Json> {   // ValuesOf<C>, PathsOf<V>, PayloadOf<C> for typed contracts (21 §3)
   // lifecycle
   ready: Promise<void>;                                         // loads, sub-schemas, setup option fetches (09 §9)
   dispose(): void;                                              // aborts async work, drops subscriptions; later writes are no-ops
   signal: AbortSignal;                                          // aborted on dispose; tie host async work to the engine
   form: Readable<FormState> & {                                 // phase, valid, validating, dirty, notices, severity, counts, conflictCount… (03 §5)
-    select<T>(pick: keyof FormState | ((s: FormState) => T), eq?: (a: T, b: T) => boolean): Readable<T>;   // notifies only when the pick changes
+    select<K extends keyof FormState>(key: K, eq?: (a: FormState[K], b: FormState[K]) => boolean): Readable<FormState[K]>;
+    select<T>(pick: (s: FormState) => T, eq?: (a: T, b: T) => boolean): Readable<T>;
   };
   revision: Readable<number>;                                   // bumps per commit changing current/rows/stash (03 §7)
 
@@ -89,7 +103,7 @@ interface FormEngine<V = Json, Paths extends string = string> {   // V = ValuesO
   // writing (origin host)
   setValue<P extends Paths>(path: P, value: ValueAt<V, P>, opts?: { runEffects?: boolean; origin?: `x-${string}` }): void;   // typed overload (21 §3)
   setValue(path: PathRef, value: Json, opts?: { runEffects?: boolean; origin?: `x-${string}` }): void;   // 03 §7
-  revert(path: PathRef): void;                                  // drop from current (03 §7)
+  revert(path: PathRef): void;                                  // restore target baseline; preserve other array cells (03 §3.2)
   reset(opts?: { keepLoaded?: boolean }): void;                 // origin reset (03 §7)
   array(path: PathRef): ArrayHandle;                            // 03 §7
   touch(path: PathRef, opts?: { validate?: boolean }): void;    // mark touched (container: descendants); validate (default true) runs unvalidated blur rules (06 §3)
@@ -99,7 +113,9 @@ interface FormEngine<V = Json, Paths extends string = string> {   // V = ValuesO
   // loading, submission, external data
   reload(opts?: { entity?: Json; policy?: ReloadPolicy }): Promise<void>;   // rejects E_SUPERSEDED when superseded (09 §3)
   validate(opts?: { trigger?: 'submit'; paths?: PathRef[] }): Promise<{ ok: boolean; notices: Array<Notice & { path: DataPath }> }>;   // 09 §4
-  serialize(opts?: { mode?: 'full' | 'patch'; validate?: boolean }): Json;   // throws E_INVALID with validate (09 §4)
+  serialize(opts?: { mode?: 'full'; validate?: boolean }): Payload;   // throws E_INVALID with validate (09 §4)
+  serialize(opts: { mode: 'patch'; validate?: boolean }): PatchOf<Payload>;   // optional object paths, whole arrays
+  serialize(opts: { mode: 'full' | 'patch'; validate?: boolean }): Payload | PatchOf<Payload>;
   submit(opts?: { confirm?: string[] }): Promise<SubmitResult>;  // 09 §4; confirm: gates to confirm first (06 §7.3); while one is in flight, returns that same promise
   confirm(gate: string): void;                                  // 06 §7.3; valid while the gate's notices stay a subset of those confirmed
   unconfirm(gate: string): void;
@@ -117,11 +133,13 @@ interface FormEngine<V = Json, Paths extends string = string> {   // V = ValuesO
 
 type SubmitResult =                                             // 09 §4
   | { ok: true }
-  | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' }
+  | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
-  | { ok: false; reason: 'gated'; gates: GateStop[] };          // GateStop: 09 §4
+  | { ok: false; reason: 'gated'; gates: GateStop[] }           // GateStop: 09 §4
+  | { ok: false; reason: `x-${string}`; notices?: NoticeInput[] };   // plugin before-hook stop
 
 type ReloadPolicy = 'preserve-edits' | 'replace-unchanged' | 'replace';   // 09 §3
+type PatchOf<T> = T extends readonly unknown[] ? T : T extends object ? { [K in keyof T]?: PatchOf<T[K]> } : T;
 ```
 
 Links: [03 §2.5](./03-state-model.md#25-commit-hooks), [03 §5](./03-state-model.md#5-field-meta-and-form-status), [03 §7](./03-state-model.md#7-engine-write-api-core), [05 §3](./05-expressions.md#3-evaluation-scope), [06 §3](./06-validation.md#3-triggers), [09 §3](./09-loading-and-submission.md#3-reload-policy), [09 §4](./09-loading-and-submission.md#4-submission-pipeline), [09 §5](./09-loading-and-submission.md#5-external-error-mapping), [09 §7](./09-loading-and-submission.md#7-external-updates-and-conflicts), [10 §3.3](./10-localization.md#33-loading-bundles-separately), [11 §8](./11-rendering-and-adapters.md#8-accessibility).
@@ -156,7 +174,8 @@ interface ArrayHandle {                                         // engine.array(
 interface FieldController<V = Json> {                           // 11 §2
   path: Readable<DataPath>; key: RowKeyPath; compiled: CompiledNode;   // path changes on row moves; key doesn't
   state: Readable<FieldState<V>>;
-  select<T>(pick: keyof FieldState<V> | ((s: FieldState<V>) => T), eq?: (a: T, b: T) => boolean): Readable<T>;
+  select<K extends keyof FieldState<V>>(key: K, eq?: (a: FieldState<V>[K], b: FieldState<V>[K]) => boolean): Readable<FieldState<V>[K]>;
+  select<T>(pick: (s: FieldState<V>) => T, eq?: (a: T, b: T) => boolean): Readable<T>;
   ids: FieldIds;                                                // 11 §8
   value: Readable<V>; visible: Readable<boolean>; feedback: Readable<Notice[]>; dirty: Readable<boolean>;   // … one per FieldState member
   options?: Readable<OptionsState>;                             // 13 §9
@@ -190,17 +209,49 @@ interface ScopeController {                                     // array row or 
   registerElement(el: unknown): () => void;
   focus(): Promise<boolean>;
 }
+
+interface DynamicGroupController extends ScopeController {      // 08 §5; old schema may remain displayed
+  status: Readable<'idle' | 'loading' | 'ready' | 'error'>;
+  diagnostic: Readable<Diagnostic | null>;
+  retry(): Promise<void>;                                       // current discriminator, generation-checked
+}
 ```
 
 `FieldState`, `FieldIds` and `AssetController`: [11 §2](./11-rendering-and-adapters.md#2-headless-field-api), [11 §8](./11-rendering-and-adapters.md#8-accessibility). `OptionsState`: [13 §9](./13-option-sources-and-cascading.md#9-renderer-view).
 
 ## 5. Built-in plugin members
 
-Recorded in the default entry's registry; with `@formgraph/engine/core`, only when `registry.plugin(factory)` is called ([03 §8](./03-state-model.md#8-plugins)). Each built-in factory carries its members in its type; `PluginMembers<R>` adds them at top level and under `engine.plugins[name]`:
+Recorded in the default entry's registry; with `@formgraph/engine/core`, only when `registry.plugin(factory)` is called ([03 §8](./03-state-model.md#8-plugins)). Each built-in factory carries its members in its type; `PluginMembers<R, O>` and `PluginMap<R, O>` expose the enabled ones at top level and under `engine.plugins[name]`:
+
+The per-engine options are a second type input, `O` (default `undefined`, meaning no overrides). Literal `false` removes a plugin from both its top-level members and `engine.plugins`. A widened `boolean` or optional disabling option makes its members optional, requiring a presence check; it must not claim that a runtime-selected plugin is always installed. Required plugin options are checked at creation (and statically when visible); disabling a plugin explicitly remains allowed unless a contract/dependency needs it.
+
+```ts
+type PluginOptionAt<O, N extends PropertyKey> = O extends undefined ? undefined : N extends keyof O ? O[N] : undefined;
+type DisabledPluginNames<R extends Registry, O> = {
+  [N in PluginName<R>]: [PluginOptionAt<O, N>] extends [false] ? N : never
+}[PluginName<R>];
+type MaybeDisabledPluginNames<R extends Registry, O> = Exclude<{
+  [N in PluginName<R>]: false extends PluginOptionAt<O, N> ? N : never
+}[PluginName<R>], DisabledPluginNames<R, O>>;
+type EnabledPluginNames<R extends Registry, O> = Exclude<PluginName<R>, DisabledPluginNames<R, O> | MaybeDisabledPluginNames<R, O>>;
+type PluginMap<R extends Registry, O = undefined> =
+  { [N in EnabledPluginNames<R, O>]: MembersOf<R, N> } &
+  { [N in MaybeDisabledPluginNames<R, O>]?: MembersOf<R, N> };
+type FormEngineWith<R extends Registry, V = Json, O = undefined, Payload = Json> =
+  Omit<FormEngine<V, PathsOf<V>, Payload>, 'plugins'> & PluginMembers<R, O> & { plugins: PluginMap<R, O> };
+```
+
+`PluginMembers<R, O>` intersects the built-in top-level member objects for `EnabledPluginNames<R, O>` and the `Partial` member objects for `MaybeDisabledPluginNames<R, O>`; disabled and third-party plugins add no top-level members. `PluginName<R>` and `MembersOf<R, N>` read the factories recorded in `R`. This filtering applies after the default entry adds its built-in factories; it never adds a disabled built-in back. Controller extensions use the same enabled/optional filtering.
+
+```ts
+const e = createFormEngine({ contract, registry, plugins: { history: false } });
+e.history.undo();                 // type error
+e.plugins.history;               // type error
+type WithoutHistory = FormEngineWith<typeof registry, Json, { history: false }>;
+```
 
 ```ts
 function definePlugin<…>(name, def): PluginFactory<Name, Opts, Members, Registers>;   // 03 §8.1
-type FormEngineWith<R extends Registry, V = Json> = FormEngine<V, PathsOf<V>> & PluginMembers<R>;
 registry.plugin(factory): Registry<E & …>;                    // registers its types/validators, records the factory
 
 history: PluginFactory<'history', { limit?: number; coalesceMs?: number } | void, { history: HistoryApi }>;   // 03 §6.2
@@ -220,7 +271,7 @@ interface WizardController {                                    // 11 §5
   steps: Readable<StepInfo[]>; current: Readable<number>; canNext: Readable<boolean>;
   next(opts?: { confirm?: string[] }): Promise<{
     ok: boolean;
-    reason?: 'errors' | 'gated' | 'validating' | 'assets-pending' | 'last-step';
+    reason?: 'errors' | 'gated' | 'validating' | 'assets-pending' | 'schema' | 'last-step';
     gates?: GateStop[];
   }>;
   prev(): void; goTo(step: number): void;
@@ -283,7 +334,7 @@ When rendering falls back for a field, the adapter reports `W_NO_RENDERER` once 
 - `engine.focus` / `engine.blur` removed; interaction is `controller.handlers`, `controller.focus()` is DOM-only.
 - `engine.array` takes row keys (was indexes), shared with `ArrayController`; `replace` matches rows by `identityKey`.
 - Built-in plugin members are top-level; third-party only under `engine.plugins`.
-- Plugin typing is inferred from the registry (`FormEngineWith<R>`), not global module augmentation, so a missing plugin is a per-engine type error. Plugins are registry-recorded factories with per-engine options; `PluginContext.fieldTypes/validators.register` is gone (declare `registers`).
+- Plugin typing is inferred from the registry and per-engine options (`FormEngineWith<R, V, O>`), not global module augmentation, so a missing/disabled plugin is a per-engine type error. Plugins are registry-recorded factories; `PluginContext.fieldTypes/validators.register` is gone (declare `registers`).
 - Form status, form-level notices and `conflictCount` had no accessor; they are one `engine.form: Readable<FormState>` with `select(key | fn)`, like `controller.state`.
 - `createFormEngine` takes only a `CompiledSchema`; contract problems reach the host through `LoadResult`, not a throw. `createFormEngineFrom` covers the raw-input case. `contractSchema` moved to `loadContract`; `FormState.phase` has no `compiling`.
 - Locale state is part of `engine.form`: `locale` and `localeStatus` (select them like any form state); `setLocale` stays a method.

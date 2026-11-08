@@ -78,6 +78,8 @@ After a successful submit, the engine reloads with the target's response (if it 
 engine.submit():                  // submit({ confirm?: string[] }): Promise<SubmitResult>
   if a submit is in flight → return its promise (no second run, no error)
   submitCount++ ; phase=submitting
+  acquire edit lock (§4 below); clear lastSubmitError
+  await schema loads for every eligible dynamic group; failed/mismatched → fail('schema')
   force-compile validators and option state for eligible fields (03 §6.3)
   start option loads that gate validity, and async rules with no settled result for the current value
   run all sync validations (trigger=submit) on fields eligible per validateHidden/validateDisabled
@@ -94,19 +96,25 @@ engine.submit():                  // submit({ confirm?: string[] }): Promise<Sub
   plugin 'before' hooks (§4.1)                                  → fail(hook's reason)
   payload = serialize()                   // outbound transformer throws → fail('transform') (08 §1.1)
   result  = await submitTargets[targetId]({ payload, mode, confirmed }, ctx)   // AsyncSource, 08 §1.1
+            // throw/reject → lastSubmitError = error; fail('target')
   if result.errors → map external errors (§5)                   → fail('external')
   if result.entity: reload({ entity: result.entity, policy: 'replace' })
   phase=submitted
+  release edit lock
   apply queued applyExternal changes (§7)
   return {ok:true}
 
-fail(reason, extra?): phase=ready; r = {ok:false, reason, ...extra}; onSubmitFailed(r) (11 §8); return r
+fail(reason, extra?):
+  phase=ready; release edit lock
+  apply queued applyExternal changes (§7)
+  r = {ok:false, reason, ...extra}
+  run plugin failure observers, then onSubmitFailed(r) (11 §8); return r
 ```
 
 ```ts
 type SubmitResult =
   | { ok: true }
-  | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' }
+  | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' | 'schema' | 'target' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
   | { ok: false; reason: 'gated'; gates: GateStop[] }
   | { ok: false; reason: `x-${string}`; notices?: NoticeInput[] };   // a plugin's `before` hook stopped the submit (§4.1)
@@ -114,12 +122,17 @@ type SubmitResult =
 type GateStop = { gate: string; policy: 'confirm' | 'block'; notices: Array<Notice & { path: DataPath }> };   // 06 §7.3
 ```
 
+**Edit lock.** From entry into `submitting` through response application, user/host/plugin value or row-structure writes (`setValue`, `revert`, `reset`, array commands, history replay and host `reload`) are rejected with `E_SUBMIT_BUSY`; `restore` retains `E_RESTORE_BUSY`. Renderers use the form phase to prevent editing without changing `disabled` or submission eligibility. The lock is not just a UI convention: every public/plugin mutation entry checks it. `applyExternal` queues changes instead. Internal schema loads, option reconciliation, computed/default evaluation and validation needed to settle this submission remain allowed and finish before serialization; after payload capture, value-changing async completions are deferred until finalization. The submit's own response reload is internal and allowed. Failure, success and disposal always release the lock; deferred work is generation-checked before applying. Thus a response `replace` cannot silently discard a newer edit. Hosts wanting uninterrupted editing should use a separate editing instance rather than bypass this lock.
+
+**Target failure.** A thrown/rejected target records the original error in `FormState.lastSubmitError` and reports a runtime `E_SUBMIT_TARGET`. It returns `{ ok: false, reason: 'target' }`, keeps local edits, restores `ready`, unlocks, drains external/deferred updates, then runs failure hooks and `onSubmitFailed`, in that order. The host may offer retry; the engine never automatically retries a potentially non-idempotent target. All other failure branches also drain the queue. Success still applies any response entity first, then unlocks and drains before success observers. Finalization is shared so cleanup cannot be skipped by a failure branch.
+
 #### 4.1 Plugin submit hooks
 
 Plugins observe the pipeline with `ctx.submission.on(event, fn)` ([03 §8.1](./03-state-model.md#81-plugin-api)); autosave, audit and analytics plugins use it.
 
 ```ts
-type SubmitHook = (e: { mode: SubmitMode; confirmed: string[]; result?: SubmitResult; signal: AbortSignal }) => void | Promise<void> | { stop: `x-${string}`; notices?: NoticeInput[] };
+type SubmitStop = { stop: `x-${string}`; notices?: NoticeInput[] };
+type SubmitHook = (e: { mode: SubmitMode; confirmed: string[]; result?: SubmitResult; signal: AbortSignal }) => void | SubmitStop | Promise<void | SubmitStop>;
 ```
 
 - `before` runs after validation and gates pass, before `serialize()`. It may be async (awaited, aborted with the submit's `signal`) and may return `{ stop: 'x-…' }`, which fails the submit with that reason (`notices` become form-level notices). It's for programmatic stops; asking the user to confirm is a gate ([06 §7.3](./06-validation.md#73-gates-submit-policy-for-warnings)).
@@ -175,11 +188,13 @@ This is **not** the JSON Schema of the contract itself ([01 §7](./01-schema-con
 
 Mapping:
 - Field → property at its `serializeAs` wire path. The type comes from the field's value shape ([01 §3.3](./01-schema-contract.md#33-core-config-and-ui)):
-  - `text` → `string`; `number` → `["number", "null"]`; `boolean` → `boolean`; `date-time` → `string` + `format: date | time | date-time`.
+  - `text` → `string`; `number` → `["number", "null"]`; `boolean` → `boolean`; `date-time` → `string`. Date-only values get `format: 'date'`; offset-bearing UTC/IANA date-times get `format: 'date-time'`. Offsetless local date-times and all time-only values omit RFC 3339 `date-time`/`time` formats (those require an offset); their granularity/timezone is recorded in `x-formgraph` annotations instead.
   - `choice` → `enum` of the option values plus `null` (no `enum` when `validateInOptions: false`); `multi-choice` → `array` with `items.enum` and `uniqueItems: true`. Static sources give the list; `map` sources give the union of all lists; `provider` sources give the scalar type only.
   - `asset` → object `{ ref, name, size, mime, meta? }` or `null`; `multi-asset` → array of those.
   - Custom types use their registered `payloadSchema` ([01 §3.4](./01-schema-contract.md#34-custom-field-types-and-typed-ui-extensions)).
 - Rules → keywords, including rules implied by config ([01 §3.3.1](./01-schema-contract.md#331-implied-rules)): `required`, `min/max` → `minimum/maximum`, `step` → `multipleOf` (only when `min` is absent or a multiple of `step`, since steps count from `min`; otherwise listed in `x-formgraph-unexported`), `minLength/maxLength`, `formatMinimum/formatMaximum` (`date-time` min/max with literal bounds), `pattern`, `minItems/maxItems`, `email` → `format: email`.
+  - Optional text with a positive `min-length` uses `anyOf: [{ const: '' }, { type: 'string', minLength: N }]`, because the rule skips empty input. Other rules that skip empty input belong inside the non-empty branch; they must not invalidate the empty branch from outside it. A statically required text field uses the non-empty branch (and at least `minLength: 1`). Conditional required is conservatively optional in the export. Other empty-skipping rules must likewise preserve the empty branch rather than narrowing the runtime's accepted values.
+  - Temporal bounds use `formatMinimum`/`formatMaximum` only with an applicable exported format and a validator extension that matches the engine's comparison semantics. Otherwise (including local date-times, time-only values and expression bounds) they are listed in `x-formgraph-unexported`; they must not invent an RFC 3339 format for offsetless storage.
 - `content` nodes have no value and never appear ([01 §3.6](./01-schema-contract.md#36-content-nodes)).
 - Fields that are **statically** hidden with `whenHidden: 'exclude'` or `'clear'` (for example `visible: false`, as the `variable` macro produces), or statically disabled with `whenDisabled: 'exclude'` (the default), are left out entirely. Computed fields are included like any other field.
 - **Outbound transformer:** if `submission.transformerId` is set, the payload can change shape. The schema then describes the payload **before** the transformer, and says so in `x-formgraph-unexported`. A transformer registration may provide `payloadSchema(input) → JsonSchema` to describe its output instead.
@@ -297,7 +312,7 @@ savedRevision = engine.revision.get();     // the restored state is what's store
 1. **Waits for `ready`**: loading and dynamic-group schema loads finish first. Rejects with `E_RESTORE_BUSY` while `phase` is `submitting`. A later `reload` or `restore` supersedes a pending one (§3).
 2. **Validates the snapshot.** Snapshots are untrusted input (they come back from storage): the shape is checked against the `Snapshot` schema first (`E_SNAPSHOT_INVALID`). Older snapshot `version`s are upgraded by built-in migrations, like contract migrations ([01 §7](./01-schema-contract.md#7-versioning-and-load-time-validation)). A different `formId`, or a `version` with no migration, rejects with `E_SNAPSHOT_MISMATCH`. A different `contractHash` isn't an error: each path is checked instead (rule 5).
 3. **Dynamic groups first.** Discriminators are ordinary paths in `current`. They are written first, the sub-schema loads they trigger are awaited, and then the rest is applied, so every restored path has its node.
-4. **Writes with origin `restore`** ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): `current` is **replaced atomically** (not merged), with no effects (origin policy `history: 'clear'`). Row keys from `rows` are reused, and `stash` and `touched` are put back. Conflicts are cleared, then recomputed by rule 6.
+4. **Writes with origin `restore`** ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)): first plan the surviving paths and stale decisions (rules 5–6), then replace `current` **atomically** (not merged), with no effects (origin policy `history: 'clear'`). Reconcile row keys against the arrays that actually survive: an applied draft array reuses its validated draft keys; an array dropped from `current` keeps the current baseline's keys, matching by `identityKey` where available and allocating fresh keys otherwise. Never install draft keys on a different baseline array. Reconcile nested arrays recursively and discard meta for removed/unmatched rows; restore `stash` and only `touched` entries whose row keys survive. Conflicts are cleared, then the conflicts planned by rule 6 are installed in the same commit.
 5. **Paths that no longer exist** in the contract are dropped with `W_SNAPSHOT_PATH_DROPPED`. Values that exist but are now invalid (an option was removed, a rule changed) are kept and simply fail validation.
 6. **Stale drafts.** For each path `p`, with `base` = `snapshot.base[p]`, `external` = the baseline now, and `local` = the draft value, the [§7.1](#71-conflict-detection) table decides: if `base` equals `external`, or there's no draft value, the draft applies; if `local` equals `external`, the path is dropped from `current` with no conflict. Otherwise (a real conflict) `onStale` decides:
    - `conflict` (default): the draft value is applied and flagged as a conflict (§7.2). Submit is blocked until resolved (`submission.conflicts`).
@@ -318,7 +333,7 @@ The engine runs on the server, renders once, and the client continues from the e
 
 ```ts
 // server; contract = (await loadContract(json, { registry })).schema, checked ok (18 §1)
-const engine = createFormEngine({ contract, registry, params });
+const engine = createFormEngine({ contract, registry, params, server: true });
 await engine.ready;                              // loads, dynamic sub-schemas, mounted option fetches
 const html = render(engine);
 const state = engine.exportState();              // JSON; embed in the page (escape for <script>)
@@ -357,7 +372,7 @@ interface EngineState {
 
 Server output and the client's first render must match: element ids are derived from row keys ([11 §8](./11-rendering-and-adapters.md#8-accessibility)), and `rows` carries the keys over.
 
-**Server-safe mode** (automatic when there is no `window`, or `createFormEngine({ server: true })`):
+**Server-safe mode** is explicit: `createFormEngine({ server: true })`; it defaults to `false`. Server adapters must opt in. Absence of `window` is never used to infer it: React Native and workers can run fully interactive forms without a DOM.
 - no timers: debounce is disabled and async validation isn't started;
 - asset stores and `applyExternal` aren't used; `submit()` rejects with `E_SERVER_UNSUPPORTED`;
 - `engine.ready` resolves after loads, sub-schemas and option fetches for fields read during setup; `dispose()` after rendering.
