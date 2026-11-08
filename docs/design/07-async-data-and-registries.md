@@ -8,7 +8,7 @@ All registries share one shape: a typed `Map<string, T>` with `register`, `get`,
 
 - **Append-only.** Registering a new id is always allowed; registering an id that already exists in the same registry throws `E_REGISTRY_DUPLICATE`, so two plugins can't silently override each other. A compiled schema keeps what it resolved; later registrations don't change running engines.
 - **Overrides use a child.** `createRegistry({ parent })` looks up its own entries first, then the parent's, so a child can replace a parent id (tests, tenants, overriding a built-in validator).
-- **Per engine.** `createFormEngine` wraps the host's registry in its own child; plugins ([02 §8.1](./02-state-model.md#81-plugin-api)) register there, so several engines can share one host registry.
+- **Per engine.** `createFormEngine` wraps the host's registry in its own child; plugins ([02 §8.1](./02-state-model.md#81-plugin-api)) are recorded on the registry as factories (`registry.plugin(factory)`, which also registers the types and validators they declare), and each engine makes its own instances, so several engines can share one host registry without sharing plugin state.
 
 | Registry | Key in contract | Implementation type | Allow-listable |
 |----------|-----------------|---------------------|----|

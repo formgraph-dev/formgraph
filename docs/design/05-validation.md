@@ -133,8 +133,8 @@ type CoreSeverity = 'error' | 'warning' | 'info';
 type Severity = CoreSeverity | `x-${string}`;   // custom severities, §7.6
 
 interface Notice {
-  source: 'sync' | 'async' | 'external' | 'group' | 'input' | 'component';
-  rule: string;                   // validator id, sourceId, 'external' / 'input', or the reporter name for 'component'
+  source: 'sync' | 'async' | 'external' | 'group' | 'input' | 'component' | 'plugin';
+  rule: string;                   // validator id, sourceId, 'external' / 'input', the reporter name for 'component', or the plugin name for 'plugin'
   code?: string;                  // machine-readable code, e.g. from ExternalErrors[].code
   message: ResolvedText;          // localized, see 09
   severity: Severity;

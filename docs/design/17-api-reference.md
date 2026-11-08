@@ -33,13 +33,13 @@ Links: [01 §7.1](./01-schema-contract.md#71-contract-load-pipeline), [`Limits`]
 ## 2. Creating an engine
 
 ```ts
-createFormEngine<const P extends readonly Plugin[] = []>(    // sync; throws only for the stats/refs recheck
-  options: FormEngineOptions & { plugins?: P },
-): FormEngineWith<P, V>                                      // default entry: FormEngineWith<[...BuiltIns, ...P], V>; V from options.contract (20 §3)
-createFormEngineFrom<const P extends readonly Plugin[] = []>(   // convenience: loadContract + createFormEngine
+createFormEngine<const R extends Registry>(                  // sync; throws only for the stats/refs recheck
+  options: FormEngineOptions & { registry: R; plugins?: PluginOptionsOf<R> },   // plugins: per-plugin options by name, or false to skip (02 §8)
+): FormEngineWith<R, V>                                      // V from options.contract (20 §3); default entry adds the built-ins to R
+createFormEngineFrom<const R extends Registry>(              // convenience: loadContract + createFormEngine
   input: string | Json,
-  opts: Omit<FormEngineOptions, 'contract'> & { plugins?: P; contractSchema?: StandardSchemaV1<unknown, FormContractInput> },
-): Promise<FormEngineWith<P>>   // loads with the same registry/limits/allow/strict; ok:false → throws ContractLoadError { diagnostics }; warnings → onDiagnostic
+  opts: Omit<FormEngineOptions, 'contract'> & { registry: R; plugins?: PluginOptionsOf<R>; contractSchema?: StandardSchemaV1<unknown, FormContractInput> },
+): Promise<FormEngineWith<R>>   // loads with the same registry/limits/allow/strict; ok:false → throws ContractLoadError { diagnostics }; warnings → onDiagnostic
 
 interface FormEngineOptions {
   contract: CompiledSchema<C>;                    // from loadContract (§1); stats/refs rechecked → E_LIMIT_EXCEEDED / E_NOT_ALLOWED, phase call (01 §7.4)
@@ -50,7 +50,7 @@ interface FormEngineOptions {
   limits?: Limits;                                // 01 §7.4
   allow?: AllowList;                              // 04 §4
   strict?: boolean;                               // strict → error warnings (16 §1)
-  plugins?: readonly Plugin[];                    // inferred as P above (02 §8.1)
+  plugins?: PluginOptionsOf<R>;                   // per-plugin options by name, or false to skip (02 §8)
   history?: { limit?: number; coalesceMs?: number };   // history plugin config, default entry (02 §6.2)
   i18n?: { locale?: LocaleTag; fallbackLocales?: LocaleTag[]; resolve?: TextResolver; format?: TextFormat };   // 09 §2
   resume?: EngineState;                           // server rendering (08 §9)
@@ -112,7 +112,7 @@ interface FormEngine<V = Json, Paths extends string = string> {   // V = ValuesO
 
   // extension
   use(hooks: CommitHooks): () => void;                          // returns detach (02 §2.5)
-  plugins: {};                                                  // narrowed by PluginMembers<P> per engine (02 §8.1)
+  plugins: {};                                                  // typed PluginMap<R> per engine (02 §8.1)
 }
 
 type SubmitResult =                                             // 08 §4
@@ -194,19 +194,20 @@ interface ScopeController {                                     // array row or 
 
 ## 5. Built-in plugin members
 
-Installed by the default entry; with `@formgraph/engine/core`, only when the plugin is passed in `plugins` ([02 §8](./02-state-model.md#8-plugins)). Each built-in factory carries its members in its type; `PluginMembers<P>` adds them at top level and under `engine.plugins[name]`:
+Recorded in the default entry's registry; with `@formgraph/engine/core`, only when `registry.plugin(factory)` is called ([02 §8](./02-state-model.md#8-plugins)). Each built-in factory carries its members in its type; `PluginMembers<R>` adds them at top level and under `engine.plugins[name]`:
 
 ```ts
-interface Plugin<Name extends string = string, Members = {}> { name: Name; setup(ctx: PluginContext): PluginInstance | void; /* phantom Members */ }
-type FormEngineWith<P extends readonly Plugin[], V = Json> = FormEngine<V, PathsOf<V>> & PluginMembers<P>;
+function definePlugin<…>(name, def): PluginFactory<Name, Opts, Members, Registers>;   // 02 §8.1
+type FormEngineWith<R extends Registry, V = Json> = FormEngine<V, PathsOf<V>> & PluginMembers<R>;
+registry.plugin(factory): Registry<E & …>;                    // registers its types/validators, records the factory
 
-history(o?: { limit?: number; coalesceMs?: number }): Plugin<'history', { history: HistoryApi }>;   // 02 §6.2
-drafts(): Plugin<'drafts', {                                                                         // 08 §8
+history: PluginFactory<'history', { limit?: number; coalesceMs?: number } | void, { history: HistoryApi }>;   // 02 §6.2
+drafts: PluginFactory<'drafts', void, {                                                                       // 08 §8
   snapshot(): Snapshot;
   restore(snapshot: Snapshot, opts?: { onStale?: 'conflict' | 'keep-draft' | 'drop' }): Promise<RestoreResult>;
 }>;
-wizard(): Plugin<'wizard', { wizard(): WizardController }>;                                         // 10 §5
-assets(): Plugin<'assets'>; icu(): Plugin<'icu'>;
+wizard: PluginFactory<'wizard', void, { wizard(): WizardController }>;                                       // 10 §5
+assets: PluginFactory<'assets', void>; icu: PluginFactory<'icu', void>;
 
 interface HistoryApi {
   undo(): void; redo(): void; clear(): void;
@@ -235,9 +236,12 @@ Links: [02 §6.2](./02-state-model.md#62-undo--redo-opt-in), [08 §8](./08-loadi
 Third-party plugin methods are only reachable as `engine.plugins[name]`, typed from the plugin's `Members` ([02 §8.1](./02-state-model.md#81-plugin-api)):
 
 ```ts
-const audit = (): Plugin<'x-audit', AuditApi> => ({ name: 'x-audit', setup: … });
-const engine = createFormEngine({ contract, registry, plugins: [audit()] });
+const audit = definePlugin('x-audit', { setup(ctx, opts: { sink: Sink }) { … } });
+const registry = createRegistry({ … }).plugin(audit);
+const engine = createFormEngine({ contract, registry, plugins: { 'x-audit': { sink } } });
 engine.plugins['x-audit'].flush();
+
+type AuditPlugins = PluginMap<typeof registry>;   // named type for helpers: { 'x-audit': AuditApi, … }
 ```
 
 ## 7. Renderers (adapter packages)
@@ -276,7 +280,7 @@ When rendering falls back for a field, the adapter reports `W_NO_RENDERER` once 
 - `engine.focus` / `engine.blur` removed; interaction is `controller.handlers`, `controller.focus()` is DOM-only.
 - `engine.array` takes row keys (was indexes), shared with `ArrayController`; `replace` matches rows by `identityKey`.
 - Built-in plugin members are top-level; third-party only under `engine.plugins`.
-- Plugin typing is inferred from the `plugins` option (`FormEngineWith<P>`), not global module augmentation, so a missing plugin is a per-engine type error.
+- Plugin typing is inferred from the registry (`FormEngineWith<R>`), not global module augmentation, so a missing plugin is a per-engine type error. Plugins are registry-recorded factories with per-engine options; `PluginContext.fieldTypes/validators.register` is gone (declare `registers`).
 - Form status, form-level notices and `conflictCount` had no accessor; they are one `engine.form: Readable<FormState>` with `select(key | fn)`, like `controller.state`.
 - `createFormEngine` takes only a `CompiledSchema`; contract problems reach the host through `LoadResult`, not a throw. `createFormEngineFrom` covers the raw-input case. `contractSchema` moved to `loadContract`; `FormState.phase` has no `compiling`.
 - Locale state is part of `engine.form`: `locale` and `localeStatus` (select them like any form state); `setLocale` stays a method.

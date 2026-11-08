@@ -42,9 +42,9 @@ Adapters' own built-in texts use keys under `formgraph.` (for example `formgraph
 The core keeps the resolution pipeline (resolver, bundles, fallback chain, `params`) but formats `{name}` substitution only. The ICU subset formatter (§3.4) is the `icu` plugin, `@formgraph/engine/icu`, which the default entry installs ([02 §8](./02-state-model.md#8-plugins)).
 
 ```ts
-import { createFormEngine } from '@formgraph/engine/core';
+import { createFormEngine, createRegistry } from '@formgraph/engine/core';
 import { icu } from '@formgraph/engine/icu';
-createFormEngine({ contract, registry, plugins: [icu()] });
+createFormEngine({ contract, registry: createRegistry().plugin(icu) });
 
 // or reuse the host's parser, so only one ships:
 createFormEngine({ …, i18n: { resolve: i18nextResolver, format: i18nextFormat } });

@@ -287,7 +287,7 @@ Entries are built per transaction and dropped after hooks run ([§2.5](#25-commi
 Decided in Q5 ([11](./11-open-questions-and-roadmap.md)). Provided by the `history` plugin ([§8](#8-plugins)), which the default entry installs. Off until configured:
 
 ```ts
-createFormEngine({ …, history: { limit: 100, coalesceMs: 1000 } });
+createFormEngine({ …, plugins: { history: { limit: 100, coalesceMs: 1000 } } });
 
 engine.history.undo(); engine.history.redo();
 engine.history.canUndo / canRedo        // Readable<boolean>
@@ -366,37 +366,40 @@ Writes through this API get origin `host`. Renderers write through `FieldControl
 Decision D23 ([README](./README.md#key-decisions-adr-summary)). A feature may be a plugin only if the host uses it purely through explicit calls **and** its absence changes no default behaviour of fields, validation or submission. Plugins: `history` (§6.2), `drafts` (snapshot/restore, [08 §8](./08-loading-and-submission.md#8-snapshots-drafts)), `wizard` ([10 §5](./10-rendering-and-adapters.md#5-wizards)), `icu` (ICU message formatting, [09 §2.1](./09-localization.md#21-formatter)), `assets` (`asset` / `multi-asset` fields, [07 §2.1](./07-async-data-and-registries.md#21-asset-stores)). Conflicts, async validation, options, loading and submission are core.
 
 ```ts
-import { createFormEngine } from '@formgraph/engine';           // installs history, drafts, wizard, icu, assets
-createFormEngine({ contract, registry, history: { limit: 100 } });
+import { createFormEngine } from '@formgraph/engine';           // default entry: history, drafts, wizard, icu, assets are already in the registry
+createFormEngine({ contract, registry, plugins: { history: { limit: 100 } } });   // per-engine options, by plugin name
 
-import { createFormEngine } from '@formgraph/engine/core';      // slim (README size budgets)
+import { createFormEngine, createRegistry } from '@formgraph/engine/core';   // slim (README size budgets): record only what you use
 import { history, drafts } from '@formgraph/engine/plugins';
-import { icu } from '@formgraph/engine/icu';
-createFormEngine({ contract, registry, plugins: [history({ limit: 100 }), drafts()] });
+const registry = createRegistry().plugin(history).plugin(drafts);
+createFormEngine({ contract, registry, plugins: { history: { limit: 100 } } });
 ```
 
-The API is the same in both cases. Built-in plugins (`history`, `drafts`, `wizard`, `assets`, `icu`) attach their members at top level (`engine.history.undo()`, `engine.snapshot()`, `engine.wizard()`; full list in [17 §5](./17-api-reference.md#5-built-in-plugin-members)). With the slim entry, calling a method of a plugin that isn't installed throws `E_PLUGIN_MISSING`, naming the plugin and its import. Engine types are inferred from the `plugins` option (§8.1), so a missing plugin is also a per-engine type error; the runtime throw remains for JS callers. Third-party plugins are reachable only as `engine.plugins[name]` (§8.1).
+A plugin is a **factory recorded in the `Registry`** ([07 §1](./07-async-data-and-registries.md#1-registries)), not something passed to the engine: `registry.plugin(factory)` registers the field types and validators it declares (so `loadContract` sees them with no engine) and records the factory. Each engine then creates its own **instance** from it, so engines sharing one registry have separate plugin state. The default entry's `createRegistry` starts with the built-ins, and its `loadContract` / `createFormEngine` add any built-in a registry lacks; the slim entry starts empty. The API is the same in both cases. Built-in plugins (`history`, `drafts`, `wizard`, `assets`, `icu`) attach their members at top level (`engine.history.undo()`, `engine.snapshot()`, `engine.wizard()`; full list in [17 §5](./17-api-reference.md#5-built-in-plugin-members)). With the slim entry, calling a method of a plugin whose factory isn't in the registry throws `E_PLUGIN_MISSING`, naming the plugin and its import. Engine types are inferred from the registry's type (§8.1), so a missing plugin is also a per-engine type error; the runtime throw remains for JS callers. Third-party plugins are reachable only as `engine.plugins[name]` (§8.1).
 
 `icu` and `assets` have no methods; slim core detects their absence from the contract instead: an ICU construct in a message or an `asset`/`multi-asset` field fails with `E_PLUGIN_MISSING` at compile (or, for `LocaleSource` bundles, when they arrive), naming the import. The form never runs with raw message syntax or unhandled fields.
 
 ### 8.1 Plugin API
 
 ```ts
-interface Plugin<Name extends string = string, Members = {}> {
-  name: Name;                                   // unique; duplicate → E_PLUGIN_DUPLICATE
-  requires?: string[];                          // other plugin names; missing → E_PLUGIN_MISSING
-  setup(ctx: PluginContext): PluginInstance | void;
-  readonly __members?: Members;                 // phantom: type-level only
-}
+function definePlugin<const Name extends string, Opts = void, Members = {}, const R extends PluginRegisters = {}>(
+  name: Name,
+  def: {
+    requires?: string[];                          // other plugin names; missing → E_PLUGIN_MISSING
+    registers?: R;                                // static: { fieldTypes?, validators? }, visible to loadContract; types flow from R (20 §1)
+    setup(ctx: PluginContext, opts: Opts): PluginInstance | void;   // once per engine, with that engine's options
+  },
+): PluginFactory<Name, Opts, Members, R>;
 
 interface PluginContext {
   engine: FormEngine;
-  store: PrivilegedStore;                       // transactions with any built-in or own origin, all slices
-  origins: { register(name: string, policy: OriginPolicy): void };   // e.g. drafts registers `restore`, history `history`
-  meta: { slice<T extends Json>(name: string, init: T): Slice<T> };  // own meta slice, e.g. meta.stash, history stacks
+  store: PluginStore;                           // read everything; commit under own x- origins; values and own meta slices only
+  origins: { register(name: string, policy: OriginPolicy): void };   // third-party: x- names only
+  meta: { slice<T extends Json>(name: string, init: T): Slice<T, string> };  // own meta slice, named <plugin>-…, e.g. x-audit-queue
   use(hooks: CommitHooks): void;                // §2.5, ordered before host hooks
-  fieldTypes: { register(type: string, impl: FieldTypeImpl): void };   // 01 §3.4; built-in plugins may use reserved names
-  validators: { register(id: string, v: Validator): void };          // e.g. assets: accept, max-bytes
+  submission: { on(event: 'before' | 'success' | 'failure', fn: SubmitHook): void };   // 08 §4
+  notices: { set(key: string, notices: NoticeInput[]): void };       // form-level notices owned by this plugin; set(key, []) clears; cleared on dispose
+  controllers: { extend<M>(create: (c: FieldController) => { members: M; dispose?(): void }, opts?: { fieldTypes?: string[] }): void };
   text: { setFormat(f: TextFormat): void; messages(m: Record<string, Text>): void };   // icu (09 §2.1)
   onReveal(fn: (path: DataPath) => void | Promise<void>): void;      // reveal hook (below)
   onDispose(fn: () => void): void;
@@ -406,19 +409,57 @@ interface PluginInstance { methods?: Record<string, unknown>; exportState?(): Js
 ```
 
 ```ts
-// typing: inferred from the plugins option, no global augmentation
-function createFormEngine<const P extends readonly Plugin[] = []>(
-  opts: FormEngineOptions & { plugins?: P }): FormEngine & PluginMembers<P>;
-type FormEngineWith<P extends readonly Plugin[], V = Json> = FormEngine<V, PathsOf<V>> & PluginMembers<P>;   // V: 20 §3   // for passing engines around
+// one base, customized by type parameters
+interface BasePluginStore<O extends string, S extends SliceAccess> {
+  read: StoreReader;                                          // everything; same for both
+  commit(origin: O, fn: (tx: PluginTx<S>) => void): void;     // same rules as store.transact (§2.1): nested, atomic, one commit
+}
+type PluginStore<Name extends string = string> = BasePluginStore<`x-${string}`, OwnSlices<Name>>;   // third-party
+type PrivilegedPluginStore = BasePluginStore<CoreOrigin | `x-${string}`, AllSlices>;                // built-ins
 
-const audit = (): Plugin<'x-audit', AuditApi> => ({ name: 'x-audit', setup: … });
-const engine = createFormEngine({ contract, registry, plugins: [history(), audit()] });
-engine.history.undo();               // HistoryApi
+type CoreOrigin = keyof typeof ORIGIN_POLICY;                 // 06 §2.1: user, host, load, external, effect, reset, history, restore, …
+type CoreMetaKey = 'rows' | 'stash' | 'conflict' | 'touched' | 'visited' | 'field';   // the meta sub-structures in §1
+
+type StoreReader = Pick<FormStore, 'snapshot' | 'select' | 'selectForm'>;   // §2.2: immutable snapshot (all slices) and Readable handles
+
+interface SliceAccess {                                       // what a commit may write
+  values: boolean;                                            // tx.set / tx.delete; the layer is the one the origin's policy names (§1)
+  core: CoreMetaKey;                                          // core meta sub-structures writable through tx.meta; `never` = none
+  notices: boolean;                                           // per-path notices of any source (§1 `notices`)
+  slices: string;                                             // names of plugin meta slices writable through tx.slice; `never` = none
+}
+type OwnSlices<Name extends string = string> = { values: true; core: never; notices: false; slices: `${Name}-${string}` };
+type AllSlices = { values: true; core: CoreMetaKey; notices: true; slices: string };
+
+type PluginTx<S extends SliceAccess> =                        // members exist only where S allows them, so a forbidden write is a type error
+  & (S['values'] extends true ? { set(path: DataPath, value: Json): void; delete(path: DataPath): void } : {})
+  & ([S['core']] extends [never] ? {} : { meta(key: S['core'], path: DataPath, patch: Json): void })
+  & (S['notices'] extends true ? { notices(path: DataPath, source: Notice['source'], list: NoticeInput[]): void } : {})
+  & ([S['slices']] extends [never] ? {} : { slice<N extends S['slices'], T extends Json>(s: Slice<T, N>, next: T): void });
+```
+
+```ts
+// typing: inferred from the registry's type (20 §1), no global augmentation
+function createFormEngine<const R extends Registry>(
+  opts: FormEngineOptions & { registry: R; plugins?: PluginOptionsOf<R> }): FormEngineWith<R>;
+type FormEngineWith<R extends Registry, V = Json> = FormEngine<V, PathsOf<V>> & PluginMembers<R>;   // V: 20 §3   // for passing engines around
+
+const audit = definePlugin('x-audit', {
+  registers: { validators: { 'x-audit-trail': auditTrail } },
+  setup(ctx, opts: { sink: (e: AuditEvent) => void }) {
+    ctx.submission.on('success', (r) => opts.sink({ type: 'submit', mode: r.mode }));
+    return { methods: { flush() { … } } };
+  },
+});
+const registry = createRegistry({ … }).plugin(audit);          // 'x-audit-trail' is now known to loadContract and typed in contracts
+const engine = createFormEngine({ contract, registry, plugins: { 'x-audit': { sink } } });   // options required when Opts isn't void
+engine.history.undo();               // HistoryApi (default entry)
 engine.plugins['x-audit'].flush();   // typed AuditApi
 ```
 
-- `methods` are exposed as `engine.plugins[name]`. Only built-in plugins also attach top-level members (`engine.history`, `engine.snapshot`/`restore`, `engine.wizard`, `assets`/`icu` have none); third-party plugins can't add top-level names, so they never collide with core or future built-ins. `PluginMembers<P>` maps each plugin's `Members` to `engine.plugins[name]`, and for built-in plugins also to top level; the default entry's `createFormEngine` returns all built-ins typed ([17 §5](./17-api-reference.md#5-built-in-plugin-members)).
-- The core `ORIGIN_POLICY` table holds core origins only ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)). Plugin-owned built-in origins are registered at install: `history` registers `history`, `drafts` registers `restore`. Third-party plugins register `x-` origins only and name meta slices `x-<plugin>-…`.
+- **Registration.** `registry.plugin(factory)` (or `createRegistry({ plugins: [...] })`) registers `registers` on the same append-only registry (a clash throws `E_REGISTRY_DUPLICATE`, naming the plugin) and records the factory; the same name twice in one registry throws `E_PLUGIN_DUPLICATE`. `plugins: { name: false }` skips one plugin for an engine (a contract that needs its types then fails with `E_PLUGIN_MISSING`). Plugin code has no way to register types or validators at `setup`, so there is one registration path.
+- `methods` are exposed as `engine.plugins[name]`. Only built-in plugins also attach top-level members (`engine.history`, `engine.snapshot`/`restore`, `engine.wizard`, `assets`/`icu` have none); third-party plugins can't add top-level names, so they never collide with core or future built-ins. `PluginMembers<R>` maps each recorded plugin's `Members` to `engine.plugins[name]`, and for built-in plugins also to top level. `engine.plugins` itself has the named type `PluginMap<R>` (`{ [N in PluginName<R>]: MembersOf<R, N> }`), so it can be referenced in helper signatures without restating the plugin list; the default entry's `createFormEngine` returns all built-ins typed ([17 §5](./17-api-reference.md#5-built-in-plugin-members)).
+- The core `ORIGIN_POLICY` table holds core origins only ([06 §2.1](./06-effects-and-computed.md#21-origin-policy)). Plugin-owned built-in origins are registered at install: `history` registers `history`, `drafts` registers `restore`. Third-party plugins register `x-` origins only and name meta slices `<plugin>-…` (the plugin name already starts with `x-`).
 - Core never refers to plugin behaviour by name. It exposes policy flags and hooks that plugins act on or implement:
 
   | Hook | Core use | Implemented by |
@@ -431,4 +472,9 @@ engine.plugins['x-audit'].flush();   // typed AuditApi
   | field type `toSnapshot` | value filter in `snapshot()` | `assets` (keeps `ready` refs) |
   | text `format` | message formatting beyond `{name}` | `icu` |
 - `exportState`/`resumeState` let a plugin take part in server rendering ([08 §9](./08-loading-and-submission.md#9-server-rendering)). Built-ins: `wizard` exports the current and visited steps; `history`, `drafts`, `assets` and `icu` export nothing (the undo stack starts empty, as after a load). `resumeState` input is untrusted: the plugin validates it, and on failure starts from its default state with `W_RESUME_PLUGIN_UNKNOWN`.
-- Plugins run `setup` in array order, before `ready`. Third-party plugin codes use `E_X_<PLUGIN>_…` ([16](./16-diagnostics.md)).
+- **Privileges.** Built-in plugins are defined with an internal variant of `definePlugin` (not exported) whose `ctx.store` is the `PrivilegedPluginStore`: commits under any origin, every slice. `PluginStore` and `PrivilegedPluginStore` both extend `BasePluginStore<Origin, Slices>`, which fixes the read side and the shape of `commit`; the type parameters set which origins and slices a plugin may use. The type parameters are only a compile-time guard. At runtime the engine also checks that a commit's origin is one this plugin registered, and that a slice name carries the plugin's prefix, and throws otherwise. Third-party plugins get `PluginStore`, which cannot write other plugins' slices, `errors` or core meta, and cannot use built-in origins. This is enforced by types and the plugin API, not a security boundary: plugins are trusted code the host chose to install and run in the same process, and the restriction prevents accidents and collisions with core or other plugins. Contracts are the untrusted input ([04 §4](./04-expressions.md#4-security-model)). Form-level messages from a plugin go through `ctx.notices.set` (`source: 'plugin'`, `rule` = the plugin name); they count like any notice, so an `error` from a plugin blocks submit with reason `errors`.
+- **Controller extensions.** `ctx.controllers.extend(create, { fieldTypes? })` adds `controller.plugins[name]` to field controllers (all, or only those of the listed types). `create` runs lazily when the controller is first created and may return `dispose`, called when the field or its row is removed. Members live as long as the row key, so they survive reorders, unlike a path string. State belongs in the plugin's own meta slice (keyed by row key), written through `ctx.store`, so it shows up in snapshots and `exportState` like other plugin state. `controller.assets` is built the same way. Third-party plugins use `x-` names only. Scope and array controllers can't be extended yet. Types: `controller.plugins` is typed like `engine.plugins`, from the engine's registry (`FieldController<V, R>`); adapters pass the controller through unchanged.
+- **Submit hooks.** `ctx.submission.on('before' | 'success' | 'failure', fn)`; see [08 §4](./08-loading-and-submission.md#4-submission-pipeline). Observe-only, except that `before` may stop the submit.
+- **Text.** One text formatter: a second `setFormat` throws `E_PLUGIN_CONFLICT`, naming both plugins. `text.messages` defaults from several plugins merge; the host's messages win, and between plugins the first installed wins ([09 §2](./09-localization.md#2-resolution)).
+- **No contract extension.** Plugins add field types, validators and `x-` keys, nothing else. The engine doesn't check `x-` keys: it owns no schema for them, and a typo is indistinguishable from another extension. Their owner (a renderer or plugin) checks its own `x-` data where it uses it ([01 §1](./01-schema-contract.md#1-principles)). Form-wide checks use group rules on the root node and the component `report`/`onValidate` hooks ([10 §2.2](./10-rendering-and-adapters.md#22-component-reported-messages-and-busy-state)); there are no plugin validation hooks.
+- Plugins run `setup` in registry order (parent registry first, then `.plugin()` call order), before `ready`. Third-party plugin codes use `E_X_<PLUGIN>_…` ([16](./16-diagnostics.md)).

@@ -297,12 +297,13 @@ Same element ids on both sides come from row keys ([10 §8](./10-rendering-and-a
 Size-sensitive apps that don't need undo, drafts or wizards import the core entry and opt in per feature ([02 §8](./02-state-model.md#8-plugins)):
 
 ```ts
-import { createFormEngine } from '@formgraph/engine/core';
+import { createFormEngine, createRegistry } from '@formgraph/engine/core';
 import { drafts } from '@formgraph/engine/plugins';
-const engine = createFormEngine({ contract, registry, plugins: [drafts()] });
+const registry = createRegistry().plugin(drafts);
+const engine = createFormEngine({ contract, registry });
 engine.history.undo();   // type error; at runtime (JS) throws E_PLUGIN_MISSING ('history')
 
-type DraftEngine = FormEngineWith<[ReturnType<typeof drafts>]>;
+type DraftEngine = FormEngineWith<typeof registry>;
 function autosave(e: DraftEngine) { save(e.snapshot()); }
 ```
 
@@ -402,7 +403,7 @@ const SubForm = ({ controller, node }: FieldRendererProps<'x-subform'>) => {
     let engine: FormEngine | undefined;
     createFormEngineFrom(fetchJson(node.contractUrl), {
       registry: childRegistry,                       // isolated: its own validators, sources, allow list
-      plugins: [],                                   // slim child; the parent's history covers undo (see below)
+      plugins: { history: false },                   // the parent's history covers undo (see below)
       context: hostContext,                          // whatever the host passes to the parent, or a narrowed copy
       i18n: { locale: parent.form.get().locale },
     }).then(async (e) => {

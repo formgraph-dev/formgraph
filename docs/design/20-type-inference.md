@@ -46,7 +46,7 @@ interface RegistryEntries {
 - **Types come from the schemas.** `value`, `config`, `ui` and validator `param` types are `StandardSchemaV1.InferOutput<…>` of the registered schemas, so nothing is written twice. A field type's `empty` must be assignable to its `value` type.
 - **Same runtime object.** `fieldType(…)` etc. register on the receiver and return it re-typed. The old `registry.fieldTypes.register(…)` stays, untyped (§6). Duplicate ids still throw `E_REGISTRY_DUPLICATE`.
 - **Children.** `createRegistry({ parent })` has type `Parent & Own`. A child that overrides a parent id must use a schema whose output is assignable to the parent's (otherwise a type error), so contracts typed against the parent stay correct.
-- **Plugins.** A plugin declares its registry entries as a type (`Plugin<Members, Entries>`). `FormEngineWith<P>` already carries plugin members; the engine's registry type also gains `Entries`. The default entry's registry type includes the built-in plugins (`asset`, `multi-asset`, `icu` formatters, …).
+- **Plugins.** A plugin declares its entries in `registers`, and `registry.plugin(factory)` returns the registry re-typed with them plus the plugin's options and members. `FormEngineWith<R>` carries the plugin members from the registry type, so a contract is checked against plugin-provided types and validators with no extra step. The default entry's registry type includes the built-in plugins (`asset`, `multi-asset`, `icu` formatters, …).
 - **Key-only registries** (providers, sources, transformers, …) contribute their ids so the contract can be checked. Their payload types are in §3.
 
 ## 2. Typed contracts

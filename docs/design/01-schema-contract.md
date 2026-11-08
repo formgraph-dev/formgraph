@@ -8,7 +8,7 @@
 - Anything that varies between deployments is referenced by **string ID** and resolved through client registries.
 - Every node has a stable `id`. Ids must be unique within their **data scope** (the nearest enclosing `dataScope` group, array row, or the root), because the id is the data key ([03 §3](./03-paths-and-dependency-graph.md#3-data-keys-and-scoping)). The compiler reports duplicates as `E_DUPLICATE_DATA_KEY`.
 - **Id grammar:** `^[A-Za-z_][A-Za-z0-9_-]*$` (`E_INVALID_ID`). `__proto__`, `constructor`, and `prototype` are reserved and rejected as ids, data keys, and `serializeAs` names (`E_RESERVED_KEY`). Both are checked at validate-input. State layers ([02](./02-state-model.md)) use null-prototype objects (`Object.create(null)`) regardless.
-- Unknown properties prefixed with `x-` are preserved and passed to renderers untouched. This is the extension point. `x-` keys are allowed on **every contract object**: `FormContract`, nodes, option sources, `SelectOption`, rules, effects, and expressions' host objects (not inside `expr`). Each of these types carries the `Extensible` index signature below.
+- Unknown properties prefixed with `x-` are preserved and passed to renderers untouched. This is the extension point. The engine doesn't check `x-` keys (it owns no schema for them, and a typo can't be told from another extension); whoever uses one, such as a renderer or plugin, checks it where it reads it. `x-` keys are allowed on **every contract object**: `FormContract`, nodes, option sources, `SelectOption`, rules, effects, and expressions' host objects (not inside `expr`). Each of these types carries the `Extensible` index signature below.
 
 ## 2. Primitives
 

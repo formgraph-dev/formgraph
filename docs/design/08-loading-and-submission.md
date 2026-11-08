@@ -91,6 +91,7 @@ engine.submit():                  // submit({ confirm?: string[] }): Promise<Sub
   confirm(opts.confirm) ; gated = gates with notices whose policy is block,
                             or confirm and not confirmed (05 §7.3)
   if gated non-empty                                            → fail('gated', { gates })
+  plugin 'before' hooks (§4.1)                                  → fail(hook's reason)
   payload = serialize()                   // outbound transformer throws → fail('transform') (07 §1.1)
   result  = await submitTargets[targetId]({ payload, mode, confirmed }, ctx)   // AsyncSource, 07 §1.1
   if result.errors → map external errors (§5)                   → fail('external')
@@ -107,10 +108,23 @@ type SubmitResult =
   | { ok: true }
   | { ok: false; reason: 'errors' | 'external' | 'transform' | 'validating' | 'assets-pending' }
   | { ok: false; reason: 'conflicts'; paths: DataPath[] }
-  | { ok: false; reason: 'gated'; gates: GateStop[] };
+  | { ok: false; reason: 'gated'; gates: GateStop[] }
+  | { ok: false; reason: `x-${string}`; notices?: NoticeInput[] };   // a plugin's `before` hook stopped the submit (§4.1)
 
 type GateStop = { gate: string; policy: 'confirm' | 'block'; notices: Array<Notice & { path: DataPath }> };   // 05 §7.3
 ```
+
+#### 4.1 Plugin submit hooks
+
+Plugins observe the pipeline with `ctx.submission.on(event, fn)` ([02 §8.1](./02-state-model.md#81-plugin-api)); autosave, audit and analytics plugins use it.
+
+```ts
+type SubmitHook = (e: { mode: SubmitMode; confirmed: string[]; result?: SubmitResult; signal: AbortSignal }) => void | Promise<void> | { stop: `x-${string}`; notices?: NoticeInput[] };
+```
+
+- `before` runs after validation and gates pass, before `serialize()`. It may be async (awaited, aborted with the submit's `signal`) and may return `{ stop: 'x-…' }`, which fails the submit with that reason (`notices` become form-level notices). It's for programmatic stops; asking the user to confirm is a gate ([05 §7.3](./05-validation.md#73-gates-submit-policy-for-warnings)).
+- `success` and `failure` run after the result is known, observe only (a return value is ignored), and can't change it. `failure` hooks run **before** the host's `onSubmitFailed`.
+- Hooks run in plugin order. A thrown hook is reported through `onDiagnostic` and doesn't change the result, except that a throwing `before` stops the submit with `reason: 'x-<plugin>'`.
 
 `onSubmitFailed` runs for **every** `{ ok: false }` result; the adapters' default branches on `reason` ([10 §8](./10-rendering-and-adapters.md#8-accessibility)).
 
