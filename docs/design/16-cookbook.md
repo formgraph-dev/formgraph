@@ -177,7 +177,7 @@ This is purely a rendering choice. Register different group renderers by platfor
 ## 10. Delayed error display, debounced effects, tabs, row labels
 
 - **Delayed errors:** a timer in the adapter around the `showFeedback` handle.
-- **Debounced effects:** commit text on blur in the renderer, or debounce in host code and write with `engine.setValue(path, value, { origin: 'x-…' })` using a registered custom origin ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). Effect handlers are synchronous and write only inside the tick, so they cannot debounce.
+- **Debounced effects:** keep the engine value current and debounce only downstream work (analytics, autosave, host requests). If a renderer must delay committing text, it **flushes pending writes before `submit()`, wizard navigation and unmount**, because Enter can submit before blur or a timer, and a timer firing during the submit lock gets `E_SUBMIT_BUSY`. Otherwise commit on blur in the renderer, or debounce in host code and write with `engine.setValue(path, value, { origin: 'x-…' })` using a registered custom origin ([07 §2.1](./07-effects-and-computed.md#21-origin-policy)). Effect handlers are synchronous and write only inside the tick, so they cannot debounce.
 - **Tabs:** a parent group with `ui: { variant: 'tabs' }` whose child groups are the tabs. Use an `x-` variant plus a registered renderer for custom tab styles.
 - **Row labels:** `label: { "default": "{name}", "params": { "name": { "lang": "json-logic", "expr": { "var": "./name" } } } }` on the row group.
 
