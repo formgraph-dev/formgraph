@@ -238,6 +238,7 @@ baseline(p) = isComputed(p) ? computed(p)        // overridable: the computed va
             : default[p]
 ```
 
+- **Acknowledged baseline.** After a save with no response entity, each exactly covered unit has a runtime-only acknowledged value that replaces the `loaded`/`default` step for that unit ([09 §4.2](./09-loading-and-submission.md#42-acknowledgement-and-response-reconciliation)). Such a unit gets a dirty bit even when `current` has no override (for example after `reset()` shows `loaded` that differs from the acknowledgement), so the dirty count tracks stored leaves **plus** units with a mismatching acknowledgement. The record is cleared when an authoritative baseline replaces it.
 - For a plain object, the baseline is built with the same per-key presence merge as values ([§3.1](#31-resolution-granularity)), so an object is dirty exactly when one of its children is. Arrays compare atomically.
 - A `whenHidden: 'clear'` write ([07 §4](./07-effects-and-computed.md#4-hidden-and-disabled-field-policy)) is a real change: the field becomes dirty and is sent in `patch` mode, because the server value will be cleared. Use `keep` or `exclude` to avoid it.
 - Non-overridable computed fields are **never dirty** and are left out of `patch` payloads ([09 §4](./09-loading-and-submission.md#serialize)).
