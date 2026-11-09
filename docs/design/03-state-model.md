@@ -230,10 +230,11 @@ Row keys (see [04 §4](./04-paths-and-dependency-graph.md#4-array-row-identity))
 
 ## 4. Dirty semantics
 
-`dirty(p) = !deepEqual(values(p), baseline(p))`, where `baseline(p)` is the §3 resolve order **without `current`**:
+`dirty(p) = !deepEqual(values(p), baseline(p))`, where `baseline(p)` is the §3 resolve order **without `current`**, except that a unit's runtime acknowledged value (below) takes precedence over every step, including an overridable computed value:
 
 ```
-baseline(p) = isComputed(p) ? computed(p)        // overridable: the computed value is the baseline
+baseline(p) = has(acknowledged, p) ? acknowledged[p]     // 09 §4.2, no-entity saves only
+            : isComputed(p) ? computed(p)        // overridable: the computed value is the baseline
             : has(loaded, p) ? loaded[p]
             : default[p]
 ```
